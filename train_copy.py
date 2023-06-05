@@ -5,7 +5,7 @@ import logging
 from path import Path
 from utils import custom_transform
 from dataset.KITTI_dataset import KITTI
-from model import DeepVIO, Encoder_CAM
+from model import DeepVIO, CAM
 from collections import defaultdict
 from utils.kitti_eval import KITTI_tester
 import numpy as np
@@ -97,14 +97,14 @@ def update_status(ep, args, model):
         lr = args.lr_warmup
         selection = 'random'
         temp = args.temp_init
-        # for param in model.module.Policy_net.parameters(): # Disable the policy network
-        #     param.requires_grad = False
+        for param in model.module.Policy_net.parameters(): # Disable the policy network
+            param.requires_grad = False
     elif ep >= args.epochs_warmup and ep < args.epochs_warmup + args.epochs_joint: # Joint training stage
         lr = args.lr_joint
         selection = 'gumbel-softmax'
         temp = args.temp_init * math.exp(-args.eta * (ep-args.epochs_warmup))
-        # for param in model.module.Policy_net.parameters(): # Enable the policy network
-        #     param.requires_grad = True
+        for param in model.module.Policy_net.parameters(): # Enable the policy network
+            param.requires_grad = True
     elif ep >= args.epochs_warmup + args.epochs_joint: # Finetuning stage
         lr = args.lr_fine
         selection = 'gumbel-softmax'
@@ -125,8 +125,9 @@ def train(model, optimizer, train_loader, selection, temp, logger, ep, p=0.5, we
         weight = weight.cuda().float()
 
         optimizer.zero_grad()
-        # 模型结果
-        poses, attn_map, decisions, probs = model(imgs)
+                
+        poses, decisions, probs, _ = model(imgs, imus, is_first=True, hc=None, temp=temp, selection=selection, p=p)
+        # poses = model(imgs)
 
         
         if not weighted:
@@ -139,8 +140,7 @@ def train(model, optimizer, train_loader, selection, temp, logger, ep, p=0.5, we
         
         pose_loss = 100 * angle_loss + translation_loss        
         penalty = (decisions[:,:,0].float()).sum(-1).mean()
-        # loss = pose_loss + args.Lambda * penalty 
-        loss = pose_loss
+        loss = pose_loss + args.Lambda * penalty 
         
         loss.backward()
         optimizer.step()
@@ -220,8 +220,7 @@ def main():
     tester = KITTI_tester(args)
 
     # Model initialization
-    # model = DeepVIO(args)
-    model = Encoder_CAM(args)
+    model = DeepVIO(args)
 
     # Continual training or not
     if args.pretrain is not None:

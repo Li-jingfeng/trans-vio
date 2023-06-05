@@ -12,8 +12,8 @@
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
-                "--gpu_ids","0",
-                "--batch_size","2",
+                "--gpu_ids","2",
+                "--batch_size","1",
                 "--data_dir","./data",
                 "--experiment_name","debug",
                 "--seq_len","11",

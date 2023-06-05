@@ -356,13 +356,14 @@ class Attention(nn.Module):
 
         attn = (q @ k.transpose(-2, -1)) * self.scale
         attn = attn.softmax(dim=-1)
+        weight = attn
         attn = self.attn_drop(attn)
 
         x = (attn @ v).transpose(1, 2).reshape(B, N, C)
         if self.with_qkv:
            x = self.proj(x)
            x = self.proj_drop(x)
-        return x
+        return x, weight
 
 class Block(nn.Module):
 
@@ -402,7 +403,9 @@ class Block(nn.Module):
             ## Temporal
             xt = x[:,1:,:]
             xt = rearrange(xt, 'b (h w t) m -> (b h w) t m',b=B,h=H,w=W,t=T)
-            res_temporal = self.drop_path(self.temporal_attn(self.temporal_norm1(xt)))
+            #temproal attn_map不要
+            tmp, attn_map = self.temporal_attn(self.temporal_norm1(xt))
+            res_temporal = self.drop_path(tmp)
             res_temporal = rearrange(res_temporal, '(b h w) t m -> b (h w t) m',b=B,h=H,w=W,t=T)
             res_temporal = self.temporal_fc(res_temporal)
             xt = x[:,1:,:] + res_temporal
@@ -414,7 +417,8 @@ class Block(nn.Module):
             xs = xt
             xs = rearrange(xs, 'b (h w t) m -> (b t) (h w) m',b=B,h=H,w=W,t=T)
             xs = torch.cat((cls_token, xs), 1)
-            res_spatial = self.drop_path(self.attn(self.norm1(xs)))
+            tmp_space, weight = self.attn(self.norm1(xs))
+            res_spatial = self.drop_path(tmp_space)
 
             ### Taking care of CLS token
             cls_token = res_spatial[:,0,:]
@@ -428,28 +432,7 @@ class Block(nn.Module):
             ## Mlp
             x = torch.cat((init_cls_token, x), 1) + torch.cat((cls_token, res), 1)
             x = x + self.drop_path(self.mlp(self.norm2(x)))
-            return x
-
-class PatchEmbed(nn.Module):
-    """ Image to Patch Embedding
-    """
-    def __init__(self, img_size=(256, 512), patch_size=16, in_chans=3, embed_dim=768):
-        super().__init__()
-
-        num_patches = (img_size[1] // patch_size) * (img_size[0] // patch_size)
-        self.img_size = img_size
-        self.patch_size = patch_size
-        self.num_patches = num_patches
-
-        self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=patch_size)
-
-    def forward(self, x):
-        B, C, T, H, W = x.shape
-        x = rearrange(x, 'b c t h w -> (b t) c h w')
-        x = self.proj(x)
-        W = x.size(-1)
-        x = x.flatten(2).transpose(1, 2)
-        return x, T, W
+            return x, weight #shape=[2,1025,512]
     
 def _no_grad_trunc_normal_(tensor, mean, std, a, b):
     def norm_cdf(x):
