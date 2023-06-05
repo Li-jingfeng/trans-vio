@@ -10,6 +10,8 @@ from collections import defaultdict
 from utils.kitti_eval import KITTI_tester
 import numpy as np
 import math
+import wandb 
+import Balance
 
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument('--data_dir', type=str, default='./data', help='path to the dataset')
@@ -32,7 +34,7 @@ parser.add_argument('--rnn_dropout_out', type=float, default=0.2, help='dropout 
 parser.add_argument('--rnn_dropout_between', type=float, default=0.2, help='dropout within LSTM')
 
 parser.add_argument('--weight_decay', type=float, default=5e-6, help='weight decay for the optimizer')
-parser.add_argument('--batch_size', type=int, default=16, help='batch size')
+parser.add_argument('--batch_size', type=int, default=4, help='batch size')
 parser.add_argument('--seq_len', type=int, default=11, help='sequence length for LSTM')
 parser.add_argument('--workers', type=int, default=4, help='number of workers')
 parser.add_argument('--epochs_warmup', type=int, default=40, help='number of epochs for warmup')
@@ -55,8 +57,36 @@ parser.add_argument('--color', default=False, action='store_true', help='whether
 
 parser.add_argument('--print_frequency', type=int, default=10, help='print frequency for loss values')
 parser.add_argument('--weighted', default=False, action='store_true', help='whether to use weighted sum')
+parser.add_argument('--patch_size', type=int, default=16, help='patch token size')
 
 args = parser.parse_args()
+
+if args.experiment_name != 'debug':
+    wandb.init(
+        # set the wandb project where this run will be logged
+        entity="vio-research",
+        project="VIO Research",
+        name=args.experiment_name,
+        
+        # track hyperparameters and run metadata
+        config={
+        "optimizer": args.optimizer,
+        "weight_decay": args.weight_decay,
+        "lr_warmup": args.lr_warmup,
+        "lr_joint": args.lr_joint,
+        "lr_fine": args.lr_fine,
+        "batch_size": args.batch_size,
+        "seq_len": args.seq_len,
+        "epochs_warmup": args.epochs_warmup,
+        "epochs_joint": args.epochs_joint,
+        "epochs_fine": args.epochs_fine,
+        "patch_size": args.patch_size,
+        "workers": args.workers,
+        "Lambda": args.Lambda,
+        "v_f_len": args.v_f_len,
+        "i_f_len":args.i_f_len,
+        }
+    )
 
 # Set the random seed
 torch.manual_seed(args.seed)
@@ -116,6 +146,8 @@ def train(model, optimizer, train_loader, selection, temp, logger, ep, p=0.5, we
         if i % args.print_frequency == 0: 
             message = f'Epoch: {ep}, iters: {i}/{data_len}, pose loss: {pose_loss.item():.6f}, penalty: {penalty.item():.6f}, loss: {loss.item():.6f}'
             print(message)
+            if args.experiment_name != 'debug':
+                wandb.log({"Epoch": ep, "iters": i, "pose loss": pose_loss.item(),"penalty": penalty, "angle loss": angle_loss.item(), "translation loss": translation_loss.item(), "loss": loss.item()})
             logger.info(message)
 
         mse_losses.append(pose_loss.item())
@@ -233,12 +265,15 @@ def main():
         avg_pose_loss, avg_penalty_loss = train(model, optimizer, train_loader, selection, temp, logger, ep, p=0.5)
         
         # Save the model after training
+        if(os.path.isfile(f'{checkpoints_dir}/{(ep-1):003}.pth')):
+            os.remove(f'{checkpoints_dir}/{(ep-1):003}.pth')
         torch.save(model.module.state_dict(), f'{checkpoints_dir}/{ep:003}.pth')
+        # Save the model after training
         message = f'Epoch {ep} training finished, pose loss: {avg_pose_loss:.6f}, penalty_loss: {avg_penalty_loss:.6f}, model saved'
         print(message)
         logger.info(message)
         
-        if ep > args.epochs_warmup+args.epochs_joint:
+        if ep > args.epochs_warmup+args.epochs_joint or (ep > 10 and ep % 2 == 0):
             # Evaluate the model
             print('Evaluating the model')
             logger.info('Evaluating the model')
@@ -254,9 +289,26 @@ def main():
 
             if t_rel < best:
                 best = t_rel 
-                torch.save(model.module.state_dict(), f'{checkpoints_dir}/best_{best:.2f}.pth')
-        
-            message = f'Epoch {ep} evaluation finished , t_rel: {t_rel:.4f}, r_rel: {r_rel:.4f}, t_rmse: {t_rmse:.4f}, r_rmse: {r_rmse:.4f}, usage: {usage:.4f}, best t_rel: {best:.4f}'
+                if best < 10:
+                    torch.save(model.module.state_dict(), f'{checkpoints_dir}/best_{best:.2f}.pth')
+
+            message = "Epoch {} evaluation Seq. 05 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, round(errors[0]['t_rel'], 4), round(errors[0]['r_rel'], 4), round(errors[0]['t_rmse'], 4), round(errors[0]['r_rmse'], 4))
+            logger.info(message)
+            print(message)
+            if args.experiment_name != 'debug':
+                wandb.log({"5. t_rel": round(errors[0]['t_rel'], 4), "5. r_rel": round(errors[0]['r_rel'], 4), "5. t_rmse": round(errors[0]['t_rmse'], 4), "5. r_rmse": round(errors[0]['r_rmse'], 4)})
+
+            message = "Epoch {} evaluation Seq. 07 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, round(errors[1]['t_rel'], 4), round(errors[1]['r_rel'], 4), round(errors[1]['t_rmse'], 4), round(errors[1]['r_rmse'], 4))
+            logger.info(message)
+            print(message)
+            if args.experiment_name != 'debug':
+                wandb.log({"7. t_rel": round(errors[1]['t_rel'], 4), "7. r_rel": round(errors[1]['r_rel'], 4), "7. t_rmse": round(errors[1]['t_rmse'], 4), "7. r_rmse": round(errors[1]['r_rmse'], 4)})
+
+            message = "Epoch {} evaluation Seq. 10 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, round(errors[2]['t_rel'], 4), round(errors[2]['r_rel'], 4), round(errors[2]['t_rmse'], 4), round(errors[2]['r_rmse'], 4))
+            logger.info(message)
+            print(message)
+            if args.experiment_name != 'debug':
+                wandb.log({"10. t_rel": round(errors[2]['t_rel'], 4), "10. r_rel": round(errors[2]['r_rel'], 4), "10. t_rmse": round(errors[2]['t_rmse'], 4), "10. r_rmse": round(errors[2]['r_rmse'], 4)})
             logger.info(message)
             print(message)
     

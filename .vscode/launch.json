@@ -12,13 +12,13 @@
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
-                "--gpu_ids","1",
-                "--batch_size","16",
+                "--gpu_ids","0",
+                "--batch_size","2",
                 "--data_dir","./data",
                 "--experiment_name","debug",
-                "--model", "transfusionodom",
                 "--seq_len","11",
                 "--workers", "4",
+                "--patch_size","16",
             ]
         }
     ]
