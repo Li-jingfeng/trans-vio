@@ -78,7 +78,8 @@ class KITTI_tester():
             x_in = image_seq.unsqueeze(0).repeat(num_gpu,1,1,1,1).cuda()
             i_in = imu_seq.unsqueeze(0).repeat(num_gpu,1,1).cuda()
             with torch.no_grad():
-                pose, decision, probs, hc = net(x_in, i_in, is_first=(i==0), hc=hc, selection=selection, p=p)
+                # pose, decision, probs, hc = net(x_in, i_in, is_first=(i==0), hc=hc, selection=selection, p=p)
+                pose, attn_map, decision, probs = net(x_in)
             pose_list.append(pose[0,:,:].detach().cpu().numpy())
             decision_list.append(decision[0,:,:].detach().cpu().numpy()[:, 0])
             probs_list.append(probs[0,:,:].detach().cpu().numpy())
@@ -220,7 +221,7 @@ def plotPath_2D(seq, poses_gt_mat, poses_est_mat, plot_path_dir, decision, speed
     fig = plt.figure(figsize=(8, 6), dpi=100)
     ax = plt.gca()
     cout = np.insert(decision, 0, 0) * 100
-    cax = plt.scatter(x_pred, z_pred, marker='o', c=cout)
+    cax = plt.scatter(x_pred, z_pred, marker='o', c=cout[1:])
     plt.xlabel('x (m)', fontsize=fontsize_)
     plt.ylabel('z (m)', fontsize=fontsize_)
     xlim = ax.get_xlim()

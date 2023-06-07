@@ -5,7 +5,7 @@ import logging
 from path import Path
 from utils import custom_transform
 from dataset.KITTI_dataset import KITTI
-from model import DeepVIO
+from model import DeepVIO,Encoder_CAM
 from collections import defaultdict
 from utils.kitti_eval import KITTI_tester
 import numpy as np
@@ -67,7 +67,8 @@ def main():
     tester = KITTI_tester(args)
 
     # Model initialization
-    model = DeepVIO(args)
+    # model = DeepVIO(args)
+    model = Encoder_CAM(args)
 
     model.load_state_dict(torch.load(args.model))
     print('load model %s'%args.model)
