@@ -79,7 +79,7 @@ class KITTI_tester():
             i_in = imu_seq.unsqueeze(0).repeat(num_gpu,1,1).cuda()
             with torch.no_grad():
                 # pose, decision, probs, hc = net(x_in, i_in, is_first=(i==0), hc=hc, selection=selection, p=p)
-                pose, attn_map, decision, probs = net(x_in)
+                pose, decision, probs = net(x_in)
             pose_list.append(pose[0,:,:].detach().cpu().numpy())
             decision_list.append(decision[0,:,:].detach().cpu().numpy()[:, 0])
             probs_list.append(probs[0,:,:].detach().cpu().numpy())
@@ -94,7 +94,7 @@ class KITTI_tester():
         for i, seq in enumerate(self.args.val_seq):
             print(f'testing sequence {seq}')
             pose_est, dec_est, prob_est = self.test_one_path(net, self.dataloader[i], selection, num_gpu=num_gpu, p=p)            
-            pose_est_global, pose_gt_global, t_rel, r_rel, t_rmse, r_rmse, usage, speed = kitti_eval(pose_est, dec_est, self.dataloader[i].poses_rel)
+            pose_est_global, pose_gt_global, t_rel, r_rel, t_rmse, r_rmse, usage, speed = kitti_eval(pose_est, dec_est, self.dataloader[i].poses_rel)# self.dataloader[i].poses_rel作为真值，6DOF的相对pose
             
             self.est.append({'pose_est_global':pose_est_global, 'pose_gt_global':pose_gt_global, 'decs':dec_est, 'probs':prob_est, 'speed':speed})
             self.errors.append({'t_rel':t_rel, 'r_rel':r_rel, 't_rmse':t_rmse, 'r_rmse':r_rmse, 'usage':usage})

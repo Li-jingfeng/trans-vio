@@ -327,10 +327,8 @@ class CAM(nn.Module):
         B = x.shape[0]
         x = x.transpose(1,2)
         x, T, W = self.patch_embed(x)# 两张图联合一起  x=[320,512,512],最后一维是dim，前面是token num
-        cls_tokens = self.cls_token.expand(x.size(0), -1, -1)
+        cls_tokens = self.cls_token.expand(x.size(0), -1, -1) # [(b t),1,dim]
         x = torch.cat((cls_tokens, x), dim=1)
-        # 包含所有token cls and patch
-        token = x.detach().clone()
 
         ## resizing the positional embeddings in case they don't match the input at inference
         if x.size(1) != self.pos_embed.size(1):
@@ -371,23 +369,25 @@ class CAM(nn.Module):
         # get space attn map
         attn_weight = []
         for blk in self.blocks:
-            x, weight = blk(x, B, T, W)
-            attn_weight.append(weight)
+            x, weight = blk(x, B, T, W)# x.shape = [2(b),1025,512]
+            attn_weight.append(weight)# attn_map shape = [(b t),c+p_token,dim]
 
+        # 包含所有token cls and patch
+        # token = x.detach().clone() #先detach再clone和先clone后detach的区别
         ### Predictions for space-only baseline
         if self.attention_type == 'space_only':
             x = rearrange(x, '(b t) n m -> b t n m',b=B,t=T)
             x = torch.mean(x, 1) # averaging predictions for every frame
 
         x = self.norm(x)# shape = [2,1025,512]
-        cls_token = token[:,0]
-        patch_token = token[:,1:]
-        return x[:, 1:], attn_weight, T, cls_token, patch_token
+        # cls_token = token[:,0]
+        # patch_token = token[:,1:]
+        return x[:, 1:], x[:,0], attn_weight, T
         # here take away patch token,for predict
 
     def forward(self, x):
-        x, attn_weight, T, cls_token, patch_token = self.forward_features(x) #得到的是patch token [2,1024,512]
-        x = self.head(x)
+        patch_token, cls_token, attn_weight, T = self.forward_features(x) #得到的是patch token [2,1024,512]
+        x = self.head(cls_token)
     
         attn_weight = torch.stack(attn_weight)# depth,(batch*T),head,h,w
         # 得到cam时会用得着
@@ -403,13 +403,17 @@ class CAM(nn.Module):
         #         patch_token = rearrange(patch_token,'(b t) h w -> b t h w',b=batch,t=T)
         #         cams = 
 
-        return x, attn_weight
+        return cls_token, patch_token, attn_weight #attn_weight shape = [block,(b,t),head,c+p_token,c+p_token]
 
 class Encoder_CAM(nn.Module):
     def __init__(self, opt):
         super(Encoder_CAM, self).__init__()
         # CNN
         self.opt = opt
+        self.T = self.opt.T
+        self.seq_len = self.opt.seq_len
+        self.token_h = int(self.opt.img_h / self.opt.patch_size)
+        self.token_w = int(self.opt.img_w / self.opt.patch_size)
         self.visual_encoder = CAM((opt.img_h,opt.img_w), opt.patch_size, in_chans=3, num_classes=opt.v_f_len, embed_dim=opt.v_f_len, depth=8)
         self.head = nn.Linear(opt.v_f_len,6)
     def forward(self, img):
@@ -421,22 +425,38 @@ class Encoder_CAM(nn.Module):
         # image CNN
         # v = v.view(batch_size * seq_len, v.size(2), v.size(3), v.size(4), v.size(5))
         #自己加入TSformer内容
-        v_f = []
+        cls_token = []
+        patch_token = []
         attn_weights = []
         for i in range(v.size(1)):
-             tmp, attn_map = self.visual_encoder(v[:,i]) 
-             v_f.append(tmp)
+             ctmp, ptmp, attn_map = self.visual_encoder(v[:,i])
+             cls_token.append(ctmp)
+             patch_token.append(ptmp)
              attn_weights.append(attn_map)
 
-        v_f = torch.stack(v_f,dim=1).to(device)
-        # 对两张图求patch token 求mean
-        vf_mean = torch.mean(v_f,dim=2)
-        est_pose = self.head(vf_mean)
-        # v = v.view(batch_size, seq_len, -1)  # (batch, seq_len, fv)
-        # v = self.visual_head(v)  # (batch, seq_len, 256)
-        decisions = torch.zeros(batch_size, seq_len, 2)
-        probs = torch.zeros(batch_size, seq_len, 2)
-        return est_pose, attn_map, decisions, probs
+        cls_token = torch.stack(cls_token,dim=1).to(device)
+        # 对两张图求patch token 求mean,这个实验名字叫ts_cam,接下来做cls_token做预测
+        # vf_mean = torch.mean(v_f,dim=2)
+        est_pose = self.head(cls_token)
+        # 得到cam时会用得着
+        if not self.training:
+            # patch feature map
+            patch_token = torch.stack(patch_token,dim=1).squeeze(0).to(device)# seq,(t h w),dim
+            patch_token = rearrange(patch_token, 's (t h w) d -> s t h w d',t=self.T,h=self.token_h,w=self.token_w)
+            # block and head维度怎么处理
+            attn_weights = torch.stack(attn_weights,dim=0)# shape = [seq,block,(b t),head,c+p_tokens,c+p_tokens]
+            attn_weights = torch.mean(attn_weights,dim=3)# mean head维度
+            # attn_weight = attn_weight[:,:,:,1:,1:]
+            attn_weights = attn_weights.sum(1)
+            attn_map = attn_weights[:, :, 0, 1:] # block 做 sum
+            attn_map = rearrange(attn_map,'s t (h w) -> s t h w',h=self.token_h,w=self.token_w)
+            # attn_map=[seq,t,h,w], patch_token=[seq,t,h,w,dim]
+            cam = attn_map[0][0] * patch_token[0][0].permute(2,0,1)
+            # attn_weight = torch.mean(attn_weight,dim=0)# (batch*T),head,h,w
+            # attn_weight = torch.mean(attn_weight,dim=1)# (batch*T),h,w
+        decisions = torch.zeros(batch_size, seq_len, 2).to(device)
+        probs = torch.zeros(batch_size, seq_len, 2).to(device)
+        return est_pose, decisions, probs
 
 class Encoder(nn.Module):
     def __init__(self, opt):

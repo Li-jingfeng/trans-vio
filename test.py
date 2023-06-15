@@ -36,6 +36,7 @@ parser.add_argument('--workers', type=int, default=4, help='number of workers')
 parser.add_argument('--experiment_name', type=str, default='test', help='experiment name')
 parser.add_argument('--model', type=str, default='./model_zoo/vf_512_if_256_3e-05.model', help='path to the pretrained model')
 parser.add_argument('--patch_size', type=int, default=16, help='patch token size')
+parser.add_argument('--T', type=int, default=2, help='time transformer T=2')
 
 args = parser.parse_args()
 

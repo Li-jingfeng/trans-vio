@@ -58,6 +58,7 @@ parser.add_argument('--color', default=False, action='store_true', help='whether
 parser.add_argument('--print_frequency', type=int, default=10, help='print frequency for loss values')
 parser.add_argument('--weighted', default=False, action='store_true', help='whether to use weighted sum')
 parser.add_argument('--patch_size', type=int, default=16, help='patch token size')
+parser.add_argument('--T', type=int, default=2, help='time transformer T=2')
 
 args = parser.parse_args()
 
@@ -85,6 +86,7 @@ if args.experiment_name != 'debug':
         "Lambda": args.Lambda,
         "v_f_len": args.v_f_len,
         "i_f_len":args.i_f_len,
+        "T": args.T,
         }
     )
 

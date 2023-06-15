@@ -430,9 +430,9 @@ class Block(nn.Module):
             x = xt
 
             ## Mlp
-            x = torch.cat((init_cls_token, x), 1) + torch.cat((cls_token, res), 1)
+            x = torch.cat((init_cls_token, x), 1) + torch.cat((cls_token, res), 1)#这里cls_token是mean之后，代表batch，我们想要每张图的cls_token
             x = x + self.drop_path(self.mlp(self.norm2(x)))
-            return x, weight #shape=[2,1025,512]
+            return x, weight #shape=[2,1025,512]  weight shape =[(b t),head,token,token]
     
 def _no_grad_trunc_normal_(tensor, mean, std, a, b):
     def norm_cdf(x):
