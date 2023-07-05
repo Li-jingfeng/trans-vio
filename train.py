@@ -11,6 +11,12 @@ from utils.kitti_eval import KITTI_tester
 import numpy as np
 import math
 import wandb 
+from vo_transformer import VisualOdometryTransformerActEmbed
+from accelerate import Accelerator
+accelerator = Accelerator(split_batches=True)
+device = accelerator.device
+# os.environ['CUDA_VISIBLE_DEVICES']='0,2'
+# device = torch.device('cuda')
 
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument('--data_dir', type=str, default='./data', help='path to the dataset')
@@ -33,7 +39,7 @@ parser.add_argument('--rnn_dropout_out', type=float, default=0.2, help='dropout 
 parser.add_argument('--rnn_dropout_between', type=float, default=0.2, help='dropout within LSTM')
 
 parser.add_argument('--weight_decay', type=float, default=5e-6, help='weight decay for the optimizer')
-parser.add_argument('--batch_size', type=int, default=4, help='batch size')
+parser.add_argument('--batch_size', type=int, default=2, help='batch size')
 parser.add_argument('--seq_len', type=int, default=11, help='sequence length for LSTM')
 parser.add_argument('--workers', type=int, default=4, help='number of workers')
 parser.add_argument('--epochs_warmup', type=int, default=40, help='number of epochs for warmup')
@@ -121,15 +127,28 @@ def train(model, optimizer, train_loader, selection, temp, logger, ep, p=0.5, we
 
     for i, (imgs, imus, gts, rot, weight) in enumerate(train_loader):
 
-        imgs = imgs.cuda().float()
-        imus = imus.cuda().float()
-        gts = gts.cuda().float() 
-        weight = weight.cuda().float()
-
+        # imgs = imgs.cuda().float()# [b,s,c,h,w]
+        # imus = imus.cuda().float()# [b,101,6]
+        # gts = gts.cuda().float() 
+        # weight = weight.cuda().float()
+        # print('------------------',gts.type(),'-------------------')
+        gts = gts.float()
         optimizer.zero_grad()
         # 模型结果
-        poses, attn_map, decisions, probs = model(imgs)
-
+        # pose, decision, prob = model(imgs)
+        # 单单为添加为了mmae cvpr23所做的准备，别的模型删掉这些。
+        batch_size,seq_len = imgs.shape[0], imgs.shape[1]
+        # 单卡使用这个device
+        # device = imgs.device
+        decisions = torch.zeros(batch_size, seq_len, 2).to(gts.device)
+        probs = torch.zeros(batch_size, seq_len, 2).to(gts.device)
+        poses = []
+        two_imgs = torch.cat((imgs[:, :-1], imgs[:, 1:]), dim=2)
+        for j in range(two_imgs.shape[1]):
+            img = {'rgb':two_imgs[:,j]} # 连续两帧
+            pose = model(img)
+            poses.append(pose)
+        poses = torch.stack(poses,dim=0).to(gts.device)
         
         if not weighted:
             angle_loss = torch.nn.functional.mse_loss(poses[:,:,:3], gts[:, :, :3])
@@ -139,12 +158,14 @@ def train(model, optimizer, train_loader, selection, temp, logger, ep, p=0.5, we
             angle_loss = (weight.unsqueeze(-1).unsqueeze(-1) * (poses[:,:,:3] - gts[:, :, :3]) ** 2).mean()
             translation_loss = (weight.unsqueeze(-1).unsqueeze(-1) * (poses[:,:,3:] - gts[:, :, 3:]) ** 2).mean()
         
-        pose_loss = 100 * angle_loss + translation_loss        
+        pose_loss = 100 * angle_loss + translation_loss    
+        pose_loss = pose_loss.float()    
         penalty = (decisions[:,:,0].float()).sum(-1).mean()
         # loss = pose_loss + args.Lambda * penalty 
         loss = pose_loss
         
-        loss.backward()
+        # loss.backward()
+        accelerator.backward(loss)
         optimizer.step()
         
         if i % args.print_frequency == 0: 
@@ -223,7 +244,14 @@ def main():
 
     # Model initialization
     # model = DeepVIO(args)
-    model = Encoder_CAM(args)
+    # 可视化所使用模型
+    # model = Encoder_CAM(args)
+
+    # 2023/6/27先不加入imu，也不使用action，只是使用multivit预训练模型，是否会对我性能产生正面的影响
+    model = VisualOdometryTransformerActEmbed(obs_size_single=(256,512),cls_action=False)
+
+    # 加入imu输入作为cls_token，得到attention map的输出？
+    # model = VisualOdometryTransformerActEmbed(obs_size_single=(256,512))
 
     # Continual training or not
     if args.pretrain is not None:
@@ -242,19 +270,21 @@ def main():
         model_dict.update(update_dict)
         model.Feature_net.load_state_dict(model_dict)
 
-    # Feed model to GPU
-    model.cuda(gpu_ids[0])
-    model = torch.nn.DataParallel(model, device_ids = gpu_ids)
-
-    pretrain = args.pretrain 
-    init_epoch = int(pretrain[-7:-4])+1 if args.pretrain is not None else 0    
-    
     # Initialize the optimizer
     if args.optimizer == 'SGD':
         optimizer = torch.optim.SGD(model.parameters(), lr=1e-4, momentum=0.9)
     elif args.optimizer == 'Adam':
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-4, betas=(0.9, 0.999), 
                                      eps=1e-08, weight_decay=args.weight_decay)
+
+    # Feed model to GPU
+    # model.cuda(gpu_ids[0])
+    # model = torch.nn.DataParallel(model, device_ids = gpu_ids)
+    model, optimizer, train_loader = accelerator.prepare(model, optimizer, train_loader)
+
+    pretrain = args.pretrain 
+    init_epoch = int(pretrain[-7:-4])+1 if args.pretrain is not None else 0    
+    
     
     best = 10000
 
@@ -268,7 +298,7 @@ def main():
 
         model.train()
         avg_pose_loss, avg_penalty_loss = train(model, optimizer, train_loader, selection, temp, logger, ep, p=0.5)
-        
+
         # Save the model after training
         if(os.path.isfile(f'{checkpoints_dir}/{(ep-1):003}.pth')):
             os.remove(f'{checkpoints_dir}/{(ep-1):003}.pth')
@@ -277,7 +307,7 @@ def main():
         message = f'Epoch {ep} training finished, pose loss: {avg_pose_loss:.6f}, penalty_loss: {avg_penalty_loss:.6f}, model saved'
         print(message)
         logger.info(message)
-        
+
         if ep > args.epochs_warmup+args.epochs_joint or (ep > 10 and ep % 2 == 0):
             # Evaluate the model
             print('Evaluating the model')
@@ -323,7 +353,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-

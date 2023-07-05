@@ -10,6 +10,7 @@ from collections import defaultdict
 from utils.kitti_eval import KITTI_tester
 import numpy as np
 import math
+from vo_transformer import VisualOdometryTransformerActEmbed
 
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument('--data_dir', type=str, default='./data', help='path to the dataset')
@@ -69,7 +70,8 @@ def main():
 
     # Model initialization
     # model = DeepVIO(args)
-    model = Encoder_CAM(args)
+    # model = Encoder_CAM(args)
+    model = VisualOdometryTransformerActEmbed(obs_size_single=(256,512),cls_action=False)
 
     model.load_state_dict(torch.load(args.model))
     print('load model %s'%args.model)

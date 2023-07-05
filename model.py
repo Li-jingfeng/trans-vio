@@ -12,6 +12,7 @@ from utils.utils import Block, Attention, trunc_normal_
 from einops.layers.torch import Rearrange
 from einops import rearrange, repeat
 
+# cvpr2023 vo-transformer模型
 
 def conv(batchNorm, in_planes, out_planes, kernel_size=3, stride=1, dropout=0):
     if batchNorm:
@@ -382,14 +383,16 @@ class CAM(nn.Module):
         x = self.norm(x)# shape = [2,1025,512]
         # cls_token = token[:,0]
         # patch_token = token[:,1:]
-        return x[:, 1:], x[:,0], attn_weight, T
+        # return x[:, 1:], x[:,0], attn_weight, T
+        return x[:,0], T
         # here take away patch token,for predict
 
     def forward(self, x):
-        patch_token, cls_token, attn_weight, T = self.forward_features(x) #得到的是patch token [2,1024,512]
+        cls_token, T = self.forward_features(x) #得到的是patch token [2,1024,512]
         x = self.head(cls_token)
     
-        attn_weight = torch.stack(attn_weight)# depth,(batch*T),head,h,w
+        # attn_weight = torch.stack(attn_weight)# depth,(batch*T),head,h,w
+
         # 得到cam时会用得着
         # if not self.training:
         #     attn_weight = torch.stack(attn_weight)# shape=[8,2,8,513,513] 0,2维度求平均，一个是block数，一个是head
@@ -403,7 +406,7 @@ class CAM(nn.Module):
         #         patch_token = rearrange(patch_token,'(b t) h w -> b t h w',b=batch,t=T)
         #         cams = 
 
-        return cls_token, patch_token, attn_weight #attn_weight shape = [block,(b,t),head,c+p_token,c+p_token]
+        return cls_token #attn_weight shape = [block,(b,t),head,c+p_token,c+p_token]
 
 class Encoder_CAM(nn.Module):
     def __init__(self, opt):
@@ -429,31 +432,31 @@ class Encoder_CAM(nn.Module):
         patch_token = []
         attn_weights = []
         for i in range(v.size(1)):
-             ctmp, ptmp, attn_map = self.visual_encoder(v[:,i])
+             ctmp = self.visual_encoder(v[:,i])
              cls_token.append(ctmp)
-             patch_token.append(ptmp)
-             attn_weights.append(attn_map)
+            #  patch_token.append(ptmp)
+            #  attn_weights.append(attn_map)
 
         cls_token = torch.stack(cls_token,dim=1).to(device)
         # 对两张图求patch token 求mean,这个实验名字叫ts_cam,接下来做cls_token做预测
         # vf_mean = torch.mean(v_f,dim=2)
         est_pose = self.head(cls_token)
         # 得到cam时会用得着
-        if not self.training:
-            # patch feature map
-            patch_token = torch.stack(patch_token,dim=1).squeeze(0).to(device)# seq,(t h w),dim
-            patch_token = rearrange(patch_token, 's (t h w) d -> s t h w d',t=self.T,h=self.token_h,w=self.token_w)
-            # block and head维度怎么处理
-            attn_weights = torch.stack(attn_weights,dim=0)# shape = [seq,block,(b t),head,c+p_tokens,c+p_tokens]
-            attn_weights = torch.mean(attn_weights,dim=3)# mean head维度
-            # attn_weight = attn_weight[:,:,:,1:,1:]
-            attn_weights = attn_weights.sum(1)
-            attn_map = attn_weights[:, :, 0, 1:] # block 做 sum
-            attn_map = rearrange(attn_map,'s t (h w) -> s t h w',h=self.token_h,w=self.token_w)
-            # attn_map=[seq,t,h,w], patch_token=[seq,t,h,w,dim]
-            cam = attn_map[0][0] * patch_token[0][0].permute(2,0,1)
-            # attn_weight = torch.mean(attn_weight,dim=0)# (batch*T),head,h,w
-            # attn_weight = torch.mean(attn_weight,dim=1)# (batch*T),h,w
+        # if not self.training:
+        #     # patch feature map
+        #     patch_token = torch.stack(patch_token,dim=1).squeeze(0).to(device)# seq,(t h w),dim
+        #     patch_token = rearrange(patch_token, 's (t h w) d -> s t h w d',t=self.T,h=self.token_h,w=self.token_w)
+        #     # block and head维度怎么处理
+        #     attn_weights = torch.stack(attn_weights,dim=0)# shape = [seq,block,(b t),head,c+p_tokens,c+p_tokens]
+        #     attn_weights = torch.mean(attn_weights,dim=3)# mean head维度
+        #     # attn_weight = attn_weight[:,:,:,1:,1:]
+        #     attn_weights = attn_weights.sum(1)
+        #     attn_map = attn_weights[:, :, 0, 1:] # block 做 sum
+        #     attn_map = rearrange(attn_map,'s t (h w) -> s t h w',h=self.token_h,w=self.token_w)
+        #     # attn_map=[seq,t,h,w], patch_token=[seq,t,h,w,dim]
+        #     cam = attn_map[0][0] * patch_token[0][0].permute(2,0,1)
+        #     # attn_weight = torch.mean(attn_weight,dim=0)# (batch*T),head,h,w
+        #     # attn_weight = torch.mean(attn_weight,dim=1)# (batch*T),h,w
         decisions = torch.zeros(batch_size, seq_len, 2).to(device)
         probs = torch.zeros(batch_size, seq_len, 2).to(device)
         return est_pose, decisions, probs

@@ -77,10 +77,22 @@ class KITTI_tester():
         for i, (image_seq, imu_seq, gt_seq) in tqdm(enumerate(df), total=len(df), smoothing=0.9):  
             x_in = image_seq.unsqueeze(0).repeat(num_gpu,1,1,1,1).cuda()
             i_in = imu_seq.unsqueeze(0).repeat(num_gpu,1,1).cuda()
+            # for cvpr2023 mmae
+            two_imgs = torch.cat((x_in[:, :-1], x_in[:, 1:]), dim=2)
+            decision = torch.zeros(x_in.shape[0], x_in.shape[1], 2).to(x_in.device)
+            probs = torch.zeros(x_in.shape[0], x_in.shape[1], 2).to(x_in.device)
+            pose_seq = []
             with torch.no_grad():
                 # pose, decision, probs, hc = net(x_in, i_in, is_first=(i==0), hc=hc, selection=selection, p=p)
-                pose, decision, probs = net(x_in)
-            pose_list.append(pose[0,:,:].detach().cpu().numpy())
+                # tscam encoder
+                # pose, decision, probs = net(x_in) 
+                for i in range(two_imgs.shape[1]):
+                    img = {'rgb':two_imgs[:,i]}
+                    pose = net(img)
+                    pose_seq.append(pose)
+            pose_seq = torch.stack(pose_seq,dim=1).to(x_in.device)
+            pose_list.append(pose_seq[0,:,:].detach().cpu().numpy())
+            # pose_list.append(pose[0,:,:].detach().cpu().numpy())
             decision_list.append(decision[0,:,:].detach().cpu().numpy()[:, 0])
             probs_list.append(probs[0,:,:].detach().cpu().numpy())
         pose_est = np.vstack(pose_list)
@@ -218,28 +230,28 @@ def plotPath_2D(seq, poses_gt_mat, poses_est_mat, plot_path_dir, decision, speed
     plt.close()
 
     # Plot decision hearmap
-    fig = plt.figure(figsize=(8, 6), dpi=100)
-    ax = plt.gca()
-    cout = np.insert(decision, 0, 0) * 100
-    cax = plt.scatter(x_pred, z_pred, marker='o', c=cout[1:])
-    plt.xlabel('x (m)', fontsize=fontsize_)
-    plt.ylabel('z (m)', fontsize=fontsize_)
-    xlim = ax.get_xlim()
-    ylim = ax.get_ylim()
-    xmean = np.mean(xlim)
-    ymean = np.mean(ylim)
-    ax.set_xlim([xmean - plot_radius, xmean + plot_radius])
-    ax.set_ylim([ymean - plot_radius, ymean + plot_radius])
-    max_usage = max(cout)
-    min_usage = min(cout)
-    ticks = np.floor(np.linspace(min_usage, max_usage, num=5))
-    cbar = fig.colorbar(cax, ticks=ticks)
-    cbar.ax.set_yticklabels([str(i) + '%' for i in ticks])
+    # fig = plt.figure(figsize=(8, 6), dpi=100)
+    # ax = plt.gca()
+    # cout = np.insert(decision, 0, 0) * 100
+    # cax = plt.scatter(x_pred, z_pred, marker='o', c=cout[1:])
+    # plt.xlabel('x (m)', fontsize=fontsize_)
+    # plt.ylabel('z (m)', fontsize=fontsize_)
+    # xlim = ax.get_xlim()
+    # ylim = ax.get_ylim()
+    # xmean = np.mean(xlim)
+    # ymean = np.mean(ylim)
+    # ax.set_xlim([xmean - plot_radius, xmean + plot_radius])
+    # ax.set_ylim([ymean - plot_radius, ymean + plot_radius])
+    # max_usage = max(cout)
+    # min_usage = min(cout)
+    # ticks = np.floor(np.linspace(min_usage, max_usage, num=5))
+    # cbar = fig.colorbar(cax, ticks=ticks)
+    # cbar.ax.set_yticklabels([str(i) + '%' for i in ticks])
 
-    plt.title('decision heatmap with window size {}'.format(window_size))
-    png_title = "{}_decision_smoothed".format(seq)
-    plt.savefig(plot_path_dir + "/" + png_title + ".png", bbox_inches='tight', pad_inches=0.1)
-    plt.close()
+    # plt.title('decision heatmap with window size {}'.format(window_size))
+    # png_title = "{}_decision_smoothed".format(seq)
+    # plt.savefig(plot_path_dir + "/" + png_title + ".png", bbox_inches='tight', pad_inches=0.1)
+    # plt.close()
 
     # Plot the speed map
     fig = plt.figure(figsize=(8, 6), dpi=100)
