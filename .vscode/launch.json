@@ -16,7 +16,7 @@
                 "--batch_size","1",
                 "--data_dir","./data",
                 "--experiment_name","debug",
-                "--seq_len","11",
+                "--seq_len","2",
                 "--workers", "4",
                 "--patch_size","16",
             ]

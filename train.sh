@@ -9,3 +9,5 @@ python train.py --gpu_ids 2 --batch_size 2 --data_dir ./data --experiment_name t
 python test.py --gpu_ids 2 --data_dir ./data --experiment_name test_ts_cam --seq_len 11 --workers 4 --patch_size 16 --model ./results/ts_cam/checkpoints/012.pth
 # TS-CAM-cls token
 python train.py --gpu_ids 2,3 --batch_size 4 --data_dir ./data --experiment_name ts_cam_cls --seq_len 11 --workers 4 --patch_size 16 --epochs_warmup 20 --epochs_joint 20 --epochs_fine 10
+# 调整batch_size和seq_len 2023/7/6
+python train.py --gpu_ids 0,1 --batch_size 16 --data_dir ./data --experiment_name ts_cam_cls_b16 --seq_len 2 --workers 48 --patch_size 16
