@@ -43,6 +43,7 @@ class VisualOdometryTransformerActEmbed(nn.Module):
         dropout_p=0.2,
         n_acts=N_ACTS,
         depth_aux_loss = False,
+        is_pretrained_mmae = True,
         **kwargs
     ):
         super().__init__()
@@ -134,18 +135,19 @@ class VisualOdometryTransformerActEmbed(nn.Module):
             model_path = {
                 'base': 'MultiMAE-B-1600.pth'
             }
-            # 检查是否已经读去所有的预训练权重, 检查确实一致，读取了encoder和input adapter,没有output adapter
-            pretrained_model_path = os.path.join(custom_model_path, model_path[backbone])
-            ckpt = torch.load(pretrained_model_path, map_location='cpu')
-            # self.vit.load_state_dict(ckpt['model'], strict=False)
-            #本来直接加权重,现在因为图像尺寸无法对应，所以input adapter的pos emb的权重与mmae提供的无法符合，所以
-            state_dict = self.vit.state_dict()
-            for key in list(state_dict.keys()):
-                if 'input_adapters.rgb.pos_emb' in key:
-                    del state_dict[key]
-                    del ckpt['model'][key]
-            state_dict.update(ckpt['model'])
-            self.vit.load_state_dict(state_dict, strict=False)
+            if is_pretrained_mmae:
+                # 检查是否已经读去所有的预训练权重, 检查确实一致，读取了encoder和input adapter,没有output adapter
+                pretrained_model_path = os.path.join(custom_model_path, model_path[backbone])
+                ckpt = torch.load(pretrained_model_path, map_location='cpu')
+                # self.vit.load_state_dict(ckpt['model'], strict=False)
+                #本来直接加权重,现在因为图像尺寸无法对应，所以input adapter的pos emb的权重与mmae提供的无法符合，所以
+                state_dict = self.vit.state_dict()
+                for key in list(state_dict.keys()):
+                    if 'input_adapters.rgb.pos_emb' in key:
+                        del state_dict[key]
+                        del ckpt['model'][key]
+                state_dict.update(ckpt['model'])
+                self.vit.load_state_dict(state_dict, strict=False)
 
         else: # self.pretrain_backbone == 'None'
             model_string = {

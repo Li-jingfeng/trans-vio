@@ -11,15 +11,16 @@
             "program": "${workspaceFolder}/train.py",
             "console": "integratedTerminal",
             "justMyCode": false,
-            "env": {"CUDA_VISIBLE_DEVICES":"0,2"},
+            "env": {"CUDA_VISIBLE_DEVICES":"3"},
             "args": [
-                // "--gpu_ids","0,1",
+                "--gpu_ids","0,1",
                 "--batch_size","1",
                 "--data_dir","./data",
                 "--experiment_name","debug",
-                "--seq_len","11",
+                "--seq_len","2",
                 "--workers", "4",
                 "--patch_size","16",
+                "--is_pretrained_mmae","True",
             ]
         },
         {

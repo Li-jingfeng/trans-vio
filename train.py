@@ -20,11 +20,11 @@ device = accelerator.device
 
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument('--data_dir', type=str, default='./data', help='path to the dataset')
-parser.add_argument('--gpu_ids', type=str, default='1', help='gpu ids: e.g. 0  0,1,2, 0,2. use -1 for CPU')
+parser.add_argument('--gpu_ids', type=str, default='0', help='gpu ids: e.g. 0  0,1,2, 0,2. use -1 for CPU')
 parser.add_argument('--save_dir', type=str, default='./results', help='path to save the result')
 
 parser.add_argument('--train_seq', type=list, default=['00', '01', '02', '04', '06', '08', '09'], help='sequences for training')
-parser.add_argument('--val_seq', type=list, default=['05', '07', '10'], help='sequences for validation')
+parser.add_argument('--val_seq', type=list, default=['05', '07', '10', '01', '02', '04'], help='sequences for validation')
 parser.add_argument('--seed', type=int, default=0, help='random seed')
 
 parser.add_argument('--img_w', type=int, default=512, help='image width')
@@ -65,6 +65,7 @@ parser.add_argument('--print_frequency', type=int, default=10, help='print frequ
 parser.add_argument('--weighted', default=False, action='store_true', help='whether to use weighted sum')
 parser.add_argument('--patch_size', type=int, default=16, help='patch token size')
 parser.add_argument('--T', type=int, default=2, help='time transformer T=2')
+parser.add_argument('--is_pretrained_mmae', type=bool, default=True, help='mmae backbone is_pretrained')
 
 args = parser.parse_args()
 
@@ -99,10 +100,13 @@ if args.experiment_name != 'debug':
 # Set the random seed
 torch.manual_seed(args.seed)
 np.random.seed(args.seed)
-
+# 修改超参数，按照cvpr2023的设置
 def update_status(ep, args, model):
     if ep < args.epochs_warmup:  # Warmup stage
-        lr = args.lr_warmup
+        # 增加自己warmup代码
+        lr_d = args.lr_warmup / 10
+        lr = lr_d * (ep + 1)
+        # lr = args.lr_warmup
         selection = 'random'
         temp = args.temp_init
         # for param in model.module.Policy_net.parameters(): # Disable the policy network
@@ -248,7 +252,7 @@ def main():
     # model = Encoder_CAM(args)
 
     # 2023/6/27先不加入imu，也不使用action，只是使用multivit预训练模型，是否会对我性能产生正面的影响
-    model = VisualOdometryTransformerActEmbed(obs_size_single=(256,512),cls_action=False)
+    model = VisualOdometryTransformerActEmbed(obs_size_single=(256,512),cls_action=False, is_pretrained_mmae=args.is_pretrained_mmae)
 
     # 加入imu输入作为cls_token，得到attention map的输出？
     # model = VisualOdometryTransformerActEmbed(obs_size_single=(256,512))
@@ -276,6 +280,9 @@ def main():
     elif args.optimizer == 'Adam':
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-4, betas=(0.9, 0.999), 
                                      eps=1e-08, weight_decay=args.weight_decay)
+    elif args.optimizer == 'adamW':
+        optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, betas=(0.9, 0.999), 
+                                     eps=1e-08, weight_decay=args.weight_decay)
 
     # Feed model to GPU
     # model.cuda(gpu_ids[0])
@@ -287,9 +294,7 @@ def main():
     
     
     best = 10000
-
     for ep in range(init_epoch, args.epochs_warmup+args.epochs_joint+args.epochs_fine):
-        
         lr, selection, temp = update_status(ep, args, model)
         optimizer.param_groups[0]['lr'] = lr
         message = f'Epoch: {ep}, lr: {lr}, selection: {selection}, temperaure: {temp:.5f}'
@@ -300,15 +305,16 @@ def main():
         avg_pose_loss, avg_penalty_loss = train(model, optimizer, train_loader, selection, temp, logger, ep, p=0.5)
 
         # Save the model after training
-        if(os.path.isfile(f'{checkpoints_dir}/{(ep-1):003}.pth')):
+        if(os.path.isfile(f'{checkpoints_dir}/{(ep-1):003}.pth') and ep%10!=0):
             os.remove(f'{checkpoints_dir}/{(ep-1):003}.pth')
-        torch.save(model.module.state_dict(), f'{checkpoints_dir}/{ep:003}.pth')
+        torch.save(model.state_dict(), f'{checkpoints_dir}/{ep:003}.pth')
         # Save the model after training
         message = f'Epoch {ep} training finished, pose loss: {avg_pose_loss:.6f}, penalty_loss: {avg_penalty_loss:.6f}, model saved'
         print(message)
         logger.info(message)
 
-        if ep > args.epochs_warmup+args.epochs_joint or (ep > 10 and ep % 2 == 0):
+        # if ep > args.epochs_warmup+args.epochs_joint or ep%10==0:
+        if ep%10==0:
             # Evaluate the model
             print('Evaluating the model')
             logger.info('Evaluating the model')
@@ -325,7 +331,7 @@ def main():
             if t_rel < best:
                 best = t_rel 
                 if best < 10:
-                    torch.save(model.module.state_dict(), f'{checkpoints_dir}/best_{best:.2f}.pth')
+                    torch.save(model.state_dict(), f'{checkpoints_dir}/best_{best:.2f}.pth')
 
             message = "Epoch {} evaluation Seq. 05 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, round(errors[0]['t_rel'], 4), round(errors[0]['r_rel'], 4), round(errors[0]['t_rmse'], 4), round(errors[0]['r_rmse'], 4))
             logger.info(message)
@@ -344,6 +350,25 @@ def main():
             print(message)
             if args.experiment_name != 'debug':
                 wandb.log({"10. t_rel": round(errors[2]['t_rel'], 4), "10. r_rel": round(errors[2]['r_rel'], 4), "10. t_rmse": round(errors[2]['t_rmse'], 4), "10. r_rmse": round(errors[2]['r_rmse'], 4)})
+            
+            message = "Epoch {} evaluation Seq. 01 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, round(errors[2]['t_rel'], 4), round(errors[2]['r_rel'], 4), round(errors[2]['t_rmse'], 4), round(errors[2]['r_rmse'], 4))
+            logger.info(message)
+            print(message)
+            if args.experiment_name != 'debug':
+                wandb.log({"01. t_rel": round(errors[2]['t_rel'], 4), "01. r_rel": round(errors[2]['r_rel'], 4), "01. t_rmse": round(errors[2]['t_rmse'], 4), "01. r_rmse": round(errors[2]['r_rmse'], 4)})
+            
+            message = "Epoch {} evaluation Seq. 02 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, round(errors[2]['t_rel'], 4), round(errors[2]['r_rel'], 4), round(errors[2]['t_rmse'], 4), round(errors[2]['r_rmse'], 4))
+            logger.info(message)
+            print(message)
+            if args.experiment_name != 'debug':
+                wandb.log({"02. t_rel": round(errors[2]['t_rel'], 4), "02. r_rel": round(errors[2]['r_rel'], 4), "02. t_rmse": round(errors[2]['t_rmse'], 4), "02. r_rmse": round(errors[2]['r_rmse'], 4)})
+            
+            message = "Epoch {} evaluation Seq. 04 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, round(errors[2]['t_rel'], 4), round(errors[2]['r_rel'], 4), round(errors[2]['t_rmse'], 4), round(errors[2]['r_rmse'], 4))
+            logger.info(message)
+            print(message)
+            if args.experiment_name != 'debug':
+                wandb.log({"04. t_rel": round(errors[2]['t_rel'], 4), "04. r_rel": round(errors[2]['r_rel'], 4), "04. t_rmse": round(errors[2]['t_rmse'], 4), "04. r_rmse": round(errors[2]['r_rmse'], 4)})
+            
             logger.info(message)
             print(message)
     
