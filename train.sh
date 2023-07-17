@@ -19,3 +19,5 @@ python train.py --gpu_ids 1 --batch_size 16 --data_dir ./data --experiment_name 
 # 7/11 fix wandb.log seq 01,02,04结果重复的bug
 python train.py --gpu_ids 0 --batch_size 16 --data_dir ./data --experiment_name ts_cam_cls_fix_log_iter300k --seq_len 2 --workers 8 --patch_size 16 --iter_warmup 60000 --iter_joint 120000 --iter_fine 120000
 python test.py --gpu_ids 1 --data_dir ./data --experiment_name test_ts_cam_cls_fix_lr_iter300k --seq_len 2 --workers 8 --patch_size 16 --model ./results/ts_cam_cls_fix_lr_iter300k/checkpoints/099.pth
+# 调整batch_size和seq_len 2023/7/6
+python train.py --gpu_ids 0,1 --batch_size 16 --data_dir ./data --experiment_name ts_cam_cls_b16 --seq_len 2 --workers 48 --patch_size 16
