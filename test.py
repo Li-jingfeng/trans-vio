@@ -18,7 +18,7 @@ parser.add_argument('--save_dir', type=str, default='./results', help='path to s
 parser.add_argument('--seq_len', type=int, default=11, help='sequence length for LSTM')
 
 parser.add_argument('--train_seq', type=list, default=['00', '01', '02', '04', '06', '08', '09'], help='sequences for training')
-parser.add_argument('--val_seq', type=list, default=['05', '07', '10'], help='sequences for validation')
+parser.add_argument('--val_seq', type=list, default=['05', '07', '10', '01', '02', '04'], help='sequences for validation')
 parser.add_argument('--seed', type=int, default=0, help='random seed')
 
 parser.add_argument('--img_w', type=int, default=512, help='image width')

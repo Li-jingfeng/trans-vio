@@ -56,6 +56,52 @@ class Inertial_encoder(nn.Module):
         x = self.encoder_conv(x.permute(0, 2, 1))                 # x: (N x seq_len, 64, 11)
         out = self.proj(x.view(x.shape[0], -1))                   # out: (N x seq_len, 256)
         return out.view(batch_size, seq_len, 256)
+    
+class flow_Encoder(nn.Module):
+    def __init__(self, opt):
+        super(flow_Encoder, self).__init__()
+        # CNN
+        self.opt = opt
+        self.conv1 = conv(True, 6, 64, kernel_size=7, stride=2, dropout=0.2)
+        self.conv2 = conv(True, 64, 128, kernel_size=5, stride=2, dropout=0.2)
+        self.conv3 = conv(True, 128, 256, kernel_size=5, stride=2, dropout=0.2)
+        self.conv3_1 = conv(True, 256, 256, kernel_size=3, stride=1, dropout=0.2)
+        self.conv4 = conv(True, 256, 512, kernel_size=3, stride=2, dropout=0.2)
+        self.conv4_1 = conv(True, 512, 512, kernel_size=3, stride=1, dropout=0.2)
+        self.conv5 = conv(True, 512, 512, kernel_size=3, stride=2, dropout=0.2)
+        self.conv5_1 = conv(True, 512, 512, kernel_size=3, stride=1, dropout=0.2)
+        self.conv6 = conv(True, 512, 1024, kernel_size=3, stride=2, dropout=0.5)
+        # Comput the shape based on diff image size
+        __tmp = Variable(torch.zeros(1, 6, opt.img_w, opt.img_h))
+        __tmp = self.encode_image(__tmp)
+
+        self.visual_head = nn.Linear(int(np.prod(__tmp.size())), opt.v_f_len)
+        # self.inertial_encoder = Inertial_encoder(opt)
+
+    def forward(self, img):
+        # seq=2才能刚好出一optical flow
+        v = torch.cat((img[:, :-1], img[:, 1:]), dim=2)
+        batch_size = v.size(0)
+        seq_len = v.size(1)
+
+        # image CNN
+        v = v.view(batch_size * seq_len, v.size(2), v.size(3), v.size(4))
+        v = self.encode_image(v) # [b,1024,4,8]
+        v = v.view(batch_size, seq_len, -1)  # (batch, seq_len, fv)
+        v = self.visual_head(v)  # (batch, seq_len, 256)
+        
+        # # IMU CNN
+        # imu = torch.cat([imu[:, i * 10:i * 10 + 11, :].unsqueeze(1) for i in range(seq_len)], dim=1)
+        # imu = self.inertial_encoder(imu)
+        return v
+
+    def encode_image(self, x):
+        out_conv2 = self.conv2(self.conv1(x))
+        out_conv3 = self.conv3_1(self.conv3(out_conv2))
+        out_conv4 = self.conv4_1(self.conv4(out_conv3))
+        out_conv5 = self.conv5_1(self.conv5(out_conv4))
+        out_conv6 = self.conv6(out_conv5)
+        return out_conv6
 # class visual_encoder(nn.Module):
 #     def __init__(self,opt,emb_dropout=0.1):
 #         super(visual_encoder,self).__init__()
@@ -91,6 +137,70 @@ class Inertial_encoder(nn.Module):
 #             x = self.dropout(x)
 
 #             x = self.transformer(x)
+
+def initialization(net):
+    #Initilization
+    for m in net.modules():
+        if isinstance(m, nn.Conv2d) or isinstance(m, nn.Conv1d) or isinstance(m, nn.ConvTranspose2d) or isinstance(m, nn.Linear):
+            kaiming_normal_(m.weight.data)
+            if m.bias is not None:
+                m.bias.data.zero_()
+        elif isinstance(m, nn.LSTM):
+            for name, param in m.named_parameters():
+                if 'weight_ih' in name:
+                    torch.nn.init.kaiming_normal_(param.data)
+                elif 'weight_hh' in name:
+                    torch.nn.init.kaiming_normal_(param.data)
+                elif 'bias_ih' in name:
+                    param.data.fill_(0)
+                elif 'bias_hh' in name:
+                    param.data.fill_(0)
+                    n = param.size(0)
+                    start, end = n//4, n//2
+                    param.data[start:end].fill_(1.)
+        elif isinstance(m, nn.BatchNorm2d) or isinstance(m, nn.BatchNorm1d):
+            m.weight.data.fill_(1)
+            m.bias.data.zero_()
+
+class FlowVO(nn.Module):
+    def __init__(self, opt):
+        super(FlowVO, self).__init__()
+
+        self.Feature_net = flow_Encoder(opt)
+        # self.ViT = 
+        # self.Pose_net = Pose_RNN(opt)
+        # self.Policy_net = PolicyNet(opt)
+        self.opt = opt
+        
+        initialization(self)
+
+    def forward(self, img, is_first=True, hc=None, temp=5, selection='gumbel-softmax', p=0.5):
+
+        fv = self.Feature_net(img)
+        batch_size = fv.shape[0]
+        seq_len = fv.shape[1]
+
+        poses, decisions, logits= [], [], []
+        
+        for i in range(seq_len):
+            # Otherwise, sample the decision from the policy network
+            p_in = torch.cat((fi[:, i, :], hidden), -1)
+            logit, decision = self.Policy_net(p_in.detach(), temp)
+            decision = decision.unsqueeze(1)
+            logit = logit.unsqueeze(1)
+            pose, hc = self.Pose_net(fv[:, i:i+1, :], fv_alter[:, i:i+1, :], fi[:, i:i+1, :], decision, hc)
+            decisions.append(decision)
+            logits.append(logit)
+        poses.append(pose)
+        hidden = hc[0].contiguous()[:, -1, :]
+
+        poses = torch.cat(poses, dim=1)
+        decisions = torch.cat(decisions, dim=1)
+        logits = torch.cat(logits, dim=1)
+        probs = torch.nn.functional.softmax(logits, dim=-1)
+
+        return poses, decisions, probs
+
 
 class PatchEmbed(nn.Module):
     """ Image to Patch Embedding
@@ -424,7 +534,6 @@ class Encoder_CAM(nn.Module):
         device = img.device
         # image CNN
         # v = v.view(batch_size * seq_len, v.size(2), v.size(3), v.size(4), v.size(5))
-        #自己加入TSformer内容
         cls_token = []
         patch_token = []
         attn_weights = []

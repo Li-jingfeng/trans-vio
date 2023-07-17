@@ -5,20 +5,47 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "train",
+            "name": "train_tscam",
             "type": "python",
             "request": "launch",
             "program": "${workspaceFolder}/train.py",
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
-                "--gpu_ids","2",
+                "--gpu_ids","1",
+                "--batch_size","16",
+                "--data_dir","./data",
+                "--experiment_name","debug",
+                "--seq_len","2",
+                "--workers", "8",
+                "--patch_size","16",
+                "--model_type","ts_cam",
+                // 没有这个参数才是iter，有这个参数就是epoch+
+                // "--epoch_or_iter", 
+                //在增加pretrain参数后，需要注意batch_size的设置要与前一个实验保持一致
+                // "--pretrain","./results/ts_cam_cls_iter300k/checkpoints/088.pth",
+            ]
+        },
+        {
+            "name": "train_flow",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/train.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "--gpu_ids","1",
                 "--batch_size","1",
                 "--data_dir","./data",
                 "--experiment_name","debug",
-                "--seq_len","11",
-                "--workers", "4",
+                "--seq_len","2",
+                "--workers", "8",
                 "--patch_size","16",
+                "--model_type","flowVO",
+                // 没有这个参数才是iter，有这个参数就是epoch
+                // "--epoch_or_iter", 
+                //在增加pretrain参数后，需要注意batch_size的设置要与前一个实验保持一致，会计算iter_init
+                // "--pretrain","./results/ts_cam_cls_iter300k/checkpoints/088.pth",
             ]
         },
         {
