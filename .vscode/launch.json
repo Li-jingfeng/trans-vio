@@ -11,16 +11,20 @@
             "program": "${workspaceFolder}/train.py",
             "console": "integratedTerminal",
             "justMyCode": false,
-            "env": {"CUDA_VISIBLE_DEVICES":"3"},
+            "env": {"CUDA_VISIBLE_DEVICES":"0"},
             "args": [
-                "--gpu_ids","0,1",
-                "--batch_size","1",
+                "--gpu_ids","0",
+                "--batch_size","16",
                 "--data_dir","./data",
                 "--experiment_name","debug",
                 "--seq_len","2",
-                "--workers", "4",
+                "--workers", "8",
                 "--patch_size","16",
-                "--is_pretrained_mmae","True",
+                "--is_pretrained_mmae","False",
+                "--model_type","cvpr",
+                "--pretrain","./model_zoo/remove_module_fix_model.pth",
+                "--img_w","341",
+                "--img_h","192",
             ]
         },
         {
@@ -34,10 +38,11 @@
                 "--gpu_ids","3",
                 "--data_dir","./data",
                 "--experiment_name","test",
-                "--seq_len","11",
+                "--seq_len","2",
                 "--workers", "4",
                 "--patch_size","16",
-                "--model","./results/ts_cam_cls/checkpoints/049.pth",
+                "--model","./results/update_head/checkpoints/099.pth",
+                "--is_pretrained_mmae","False",
             ]
         },
         {
@@ -48,14 +53,19 @@
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
-                "--gpu_ids","3",
+                "--gpu_ids","0",
                 "--data_dir","./data",
-                "--experiment_name","test",
-                "--seq_len","11",
-                "--workers", "4",
+                "--experiment_name","debug",
+                "--seq_len","2",
+                "--workers", "8",
                 "--patch_size","16",
-                "--model","./results/mmae50epoch/checkpoints/011_copy.pth",
+                // "--model","./results/mmae50epoch/checkpoints/011_copy.pth",
+                "--model","./model_zoo/remove_module_fix_model.pth",//来自cvpr2023 only rgb模型参数
+                "--img_w","341",
+                "--img_h","192",//为了应用cvpr模型参数，需要将图片resize到192*341
             ]
         }
     ]
 }
+
+// 需要将x,z,yaw relative pose保存下来，构建global pose(同样是x,z,yaw，要有2*2 rotation matrix),画图评价

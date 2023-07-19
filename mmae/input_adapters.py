@@ -28,7 +28,7 @@ class PatchedInputAdapter(nn.Module):
                  dim_tokens: Optional[int] = None,
                  sincos_pos_emb: bool = True,
                  learnable_pos_emb: bool = False,
-                 image_size: Union[int, Tuple[int]] = (256,512)):
+                 image_size: Union[int, Tuple[int]] = 224):
         super().__init__()
         self.num_channels = num_channels
         self.stride_level = stride_level

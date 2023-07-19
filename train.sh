@@ -25,3 +25,7 @@ CUDA_VISIBLE_DEVICES="0" accelerate launch train.py --batch_size 12 --data_dir .
 # 2023/7/7 - 7/8 使用cvpr中的训练参数 and is_pretrained_mmae==True  这个实验没有跑，现在最重要的是解决过拟合的问题
 CUDA_VISIBLE_DEVICES="1" accelerate launch train.py --batch_size 12 --data_dir ./data --experiment_name mmaebatch12-pretrained-hyperparameter --seq_len 2 --workers 8 --patch_size 16 --is_pretrained_mmae True --epochs_warmup 10 --epochs_joint 45 --epochs_fine 45 --lr_warmup 2e-4 --lr_joint 2e-4 --lr_fine 2e-4 --optimizer adamW
 # 2023/7/8 解决ts_cam_cls过拟合的问题
+
+# 加载预训练模型，只更新head部分，结果update_head很差
+python train.py --model_type cvpr --gpu_ids 2 --batch_size 16 --data_dir ./data --experiment_name update_head --seq_len 2 --workers 8 --patch_size 16 --pretrain ./model_zoo/remove_module_fix_model.pth --epochs_warmup 40 --epochs_joint 40 --epochs_fine 20 --is_pretrained_mmae False --img_w 341 --img_h 192
+#update only head结果不能说明继续训练会不会有提升，有的序列结果好，有的序列结果差

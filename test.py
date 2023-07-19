@@ -19,7 +19,7 @@ parser.add_argument('--save_dir', type=str, default='./results', help='path to s
 parser.add_argument('--seq_len', type=int, default=11, help='sequence length for LSTM')
 
 parser.add_argument('--train_seq', type=list, default=['00', '01', '02', '04', '06', '08', '09'], help='sequences for training')
-parser.add_argument('--val_seq', type=list, default=['05', '07', '10'], help='sequences for validation')
+parser.add_argument('--val_seq', type=list, default=['05'], help='sequences for validation')
 parser.add_argument('--seed', type=int, default=0, help='random seed')
 
 parser.add_argument('--img_w', type=int, default=512, help='image width')
@@ -38,6 +38,7 @@ parser.add_argument('--experiment_name', type=str, default='test', help='experim
 parser.add_argument('--model', type=str, default='./model_zoo/vf_512_if_256_3e-05.model', help='path to the pretrained model')
 parser.add_argument('--patch_size', type=int, default=16, help='patch token size')
 parser.add_argument('--T', type=int, default=2, help='time transformer T=2')
+parser.add_argument('--is_pretrained_mmae', type=bool, default=False, help='mmae backbone is_pretrained')
 
 args = parser.parse_args()
 
@@ -71,9 +72,10 @@ def main():
     # Model initialization
     # model = DeepVIO(args)
     # model = Encoder_CAM(args)
-    model = VisualOdometryTransformerActEmbed(obs_size_single=(256,512),cls_action=False)
-
-    model.load_state_dict(torch.load(args.model))
+    model = VisualOdometryTransformerActEmbed(cls_action=False)
+    weights = torch.load(args.model)
+    new_state_dict = {k.replace('module.', ''): v for k, v in weights.items()}
+    model.load_state_dict(new_state_dict, strict=True)
     print('load model %s'%args.model)
         
     # Feed model to GPU
@@ -86,9 +88,9 @@ def main():
     tester.save_text(result_dir)
     
     for i, seq in enumerate(args.val_seq):
-        message = f"Seq: {seq}, t_rel: {tester.errors[i]['t_rel']:.4f}, r_rel: {tester.errors[i]['r_rel']:.4f}, "
-        message += f"t_rmse: {tester.errors[i]['t_rmse']:.4f}, r_rmse: {tester.errors[i]['r_rmse']:.4f}, "
-        message += f"usage: {tester.errors[i]['usage']:.4f}"
+        message = f"Seq: {seq}, t_rel: {errors[i]['t_rel']:.4f}, r_rel: {tester.errors[i]['r_rel']:.4f}, "
+        message += f"t_rmse: {errors[i]['t_rmse']:.4f}, r_rmse: {tester.errors[i]['r_rmse']:.4f}, "
+        message += f"usage: {errors[i]['usage']:.4f}"
         print(message)
     
     

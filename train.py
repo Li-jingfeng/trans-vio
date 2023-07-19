@@ -12,9 +12,9 @@ import numpy as np
 import math
 import wandb 
 from vo_transformer import VisualOdometryTransformerActEmbed
-from accelerate import Accelerator
-accelerator = Accelerator(split_batches=True)
-device = accelerator.device
+# from accelerate import Accelerator
+# accelerator = Accelerator(split_batches=True)
+# device = accelerator.device
 # os.environ['CUDA_VISIBLE_DEVICES']='0,2'
 # device = torch.device('cuda')
 
@@ -66,6 +66,7 @@ parser.add_argument('--weighted', default=False, action='store_true', help='whet
 parser.add_argument('--patch_size', type=int, default=16, help='patch token size')
 parser.add_argument('--T', type=int, default=2, help='time transformer T=2')
 parser.add_argument('--is_pretrained_mmae', type=bool, default=True, help='mmae backbone is_pretrained')
+parser.add_argument('--model_type',type=str, default='cvpr', help='model type:[cvpr,deepvio,tscam]')
 
 args = parser.parse_args()
 
@@ -94,6 +95,8 @@ if args.experiment_name != 'debug':
         "v_f_len": args.v_f_len,
         "i_f_len":args.i_f_len,
         "T": args.T,
+        "is_pretrained_mmae": args.is_pretrained_mmae,
+        "model_type": args.model_type,
         }
     )
 
@@ -123,7 +126,7 @@ def update_status(ep, args, model):
         temp = args.temp_init * math.exp(-args.eta * (ep-args.epochs_warmup))
     return lr, selection, temp
 
-def train(model, optimizer, train_loader, selection, temp, logger, ep, p=0.5, weighted=False):
+def train(model, optimizer, train_loader, selection, temp, logger, ep, iter, p=0.5, weighted=False):
     
     mse_losses = []
     penalties = []
@@ -131,10 +134,10 @@ def train(model, optimizer, train_loader, selection, temp, logger, ep, p=0.5, we
 
     for i, (imgs, imus, gts, rot, weight) in enumerate(train_loader):
 
-        # imgs = imgs.cuda().float()# [b,s,c,h,w]
-        # imus = imus.cuda().float()# [b,101,6]
-        # gts = gts.cuda().float() 
-        # weight = weight.cuda().float()
+        imgs = imgs.cuda().float()# [b,s,c,h,w]
+        imus = imus.cuda().float()# [b,101,6]
+        gts = gts.cuda().float() 
+        weight = weight.cuda().float()
         # print('------------------',gts.type(),'-------------------')
         gts = gts.float()
         optimizer.zero_grad()
@@ -143,17 +146,17 @@ def train(model, optimizer, train_loader, selection, temp, logger, ep, p=0.5, we
         # 单单为添加为了mmae cvpr23所做的准备，别的模型删掉这些。
         batch_size,seq_len = imgs.shape[0], imgs.shape[1]
         # 单卡使用这个device
-        # device = imgs.device
-        decisions = torch.zeros(batch_size, seq_len, 2).to(gts.device)
-        probs = torch.zeros(batch_size, seq_len, 2).to(gts.device)
+        device = imgs.device
+        decisions = torch.zeros(batch_size, seq_len, 2).to(device)
+        probs = torch.zeros(batch_size, seq_len, 2).to(device)
         poses = []
         two_imgs = torch.cat((imgs[:, :-1], imgs[:, 1:]), dim=2)
         for j in range(two_imgs.shape[1]):
             img = {'rgb':two_imgs[:,j]} # 连续两帧
             pose = model(img)
             poses.append(pose)
-        poses = torch.stack(poses,dim=0).to(gts.device)
-        
+        poses = torch.stack(poses,dim=0).to(device)
+        poses = poses.permute(1,0,2)
         if not weighted:
             angle_loss = torch.nn.functional.mse_loss(poses[:,:,:3], gts[:, :, :3])
             translation_loss = torch.nn.functional.mse_loss(poses[:,:,3:], gts[:, :, 3:])
@@ -167,26 +170,28 @@ def train(model, optimizer, train_loader, selection, temp, logger, ep, p=0.5, we
         penalty = (decisions[:,:,0].float()).sum(-1).mean()
         # loss = pose_loss + args.Lambda * penalty 
         loss = pose_loss
-        
-        # loss.backward()
-        accelerator.backward(loss)
+
+        loss.backward()
+        # accelerator.backward(loss)
         optimizer.step()
-        
+
+        iter = iter + 1
         if i % args.print_frequency == 0: 
-            message = f'Epoch: {ep}, iters: {i}/{data_len}, pose loss: {pose_loss.item():.6f}, penalty: {penalty.item():.6f}, loss: {loss.item():.6f}'
+            message = f'Epoch: {ep}, iters: {i}/{data_len}, iter: {iter}/{data_len}, pose loss: {pose_loss.item():.6f}, penalty: {penalty.item():.6f}, loss: {loss.item():.6f}'
             print(message)
             if args.experiment_name != 'debug':
-                wandb.log({"Epoch": ep, "iters": i, "pose loss": pose_loss.item(),"penalty": penalty, "angle loss": angle_loss.item(), "translation loss": translation_loss.item(), "loss": loss.item()})
+                wandb.log({"Epoch": ep, "iters": i, "iter": iter, "pose loss": pose_loss.item(),"penalty": penalty, "angle loss": angle_loss.item(), "translation loss": translation_loss.item(), "loss": loss.item()})
             logger.info(message)
 
         mse_losses.append(pose_loss.item())
         penalties.append(penalty.item())
 
-    return np.mean(mse_losses), np.mean(penalties)
+    return np.mean(mse_losses), np.mean(penalties), iter
 
 
 def main():
-
+    iter = 0
+    ep = 0
     # Create Dir
     experiment_dir = Path('./results')
     experiment_dir.mkdir_p()
@@ -247,25 +252,34 @@ def main():
     tester = KITTI_tester(args)
 
     # Model initialization
-    # model = DeepVIO(args)
-    # 可视化所使用模型
-    # model = Encoder_CAM(args)
+    if args.model_type == 'deepvio':
+        model = DeepVIO(args)
+    elif args.model_type == 'cvpr':
+        model = VisualOdometryTransformerActEmbed(cls_action=False, is_pretrained_mmae=args.is_pretrained_mmae)
+    elif args.model_type == 'tscam':
+        # 可视化所使用模型
+        model = Encoder_CAM(args)
 
     # 2023/6/27先不加入imu，也不使用action，只是使用multivit预训练模型，是否会对我性能产生正面的影响
-    model = VisualOdometryTransformerActEmbed(obs_size_single=(256,512),cls_action=False, is_pretrained_mmae=args.is_pretrained_mmae)
-
-    # 加入imu输入作为cls_token，得到attention map的输出？
-    # model = VisualOdometryTransformerActEmbed(obs_size_single=(256,512))
 
     # Continual training or not
     if args.pretrain is not None:
-        model.load_state_dict(torch.load(args.pretrain))
+        state_dict = torch.load(args.pretrain)
+        for key in list(state_dict):
+            if key == 'head.4.weight' or key == 'head.4.bias':
+                del state_dict[key]
+        model.load_state_dict(state_dict,strict=False)
         print('load model %s'%args.pretrain)
         logger.info('load model %s'%args.pretrain)
     else:
         print('Training from scratch')
         logger.info('Training from scratch')
-    
+    # 其他部分参数不更新，只更新head部分
+    for param in model.parameters():
+        param.requires_grad = False
+    for param in model.head.parameters():
+        param.requires_grad = True
+
     # Use the pre-trained flownet or not
     if args.pretrain_flownet and args.pretrain is None:
         pretrained_w = torch.load(args.pretrain_flownet, map_location='cpu')
@@ -285,31 +299,32 @@ def main():
                                      eps=1e-08, weight_decay=args.weight_decay)
 
     # Feed model to GPU
-    # model.cuda(gpu_ids[0])
-    # model = torch.nn.DataParallel(model, device_ids = gpu_ids)
-    model, optimizer, train_loader = accelerator.prepare(model, optimizer, train_loader)
+    model.cuda(gpu_ids[0])
+    model = torch.nn.DataParallel(model, device_ids = gpu_ids)
+    # model, optimizer, train_loader = accelerator.prepare(model, optimizer, train_loader)
 
     pretrain = args.pretrain 
-    init_epoch = int(pretrain[-7:-4])+1 if args.pretrain is not None else 0    
-    
+    init_epoch = int(pretrain[-7:-4])+1 if args.pretrain is not None and args.model_type!='cvpr' else 0    
+    iter = init_epoch*(len(train_loader) // args.batch_size + 1) if args.pretrain is not None else 0
     
     best = 10000
     for ep in range(init_epoch, args.epochs_warmup+args.epochs_joint+args.epochs_fine):
+    # while(iter < args.iter_warmup+args.iter_joint+args.iter_fine):
         lr, selection, temp = update_status(ep, args, model)
         optimizer.param_groups[0]['lr'] = lr
-        message = f'Epoch: {ep}, lr: {lr}, selection: {selection}, temperaure: {temp:.5f}'
+        message = f'Epoch: {ep}, iter: {iter}, lr: {lr}, selection: {selection}, temperaure: {temp:.5f}'
         print(message)
         logger.info(message)
 
         model.train()
-        avg_pose_loss, avg_penalty_loss = train(model, optimizer, train_loader, selection, temp, logger, ep, p=0.5)
+        avg_pose_loss, avg_penalty_loss, iter = train(model, optimizer, train_loader, selection, temp, logger, ep, iter, p=0.5)
 
         # Save the model after training
-        if(os.path.isfile(f'{checkpoints_dir}/{(ep-1):003}.pth') and ep%10!=0):
+        if(os.path.isfile(f'{checkpoints_dir}/{(ep-1):003}.pth') and ep%10!=1):
             os.remove(f'{checkpoints_dir}/{(ep-1):003}.pth')
         torch.save(model.state_dict(), f'{checkpoints_dir}/{ep:003}.pth')
         # Save the model after training
-        message = f'Epoch {ep} training finished, pose loss: {avg_pose_loss:.6f}, penalty_loss: {avg_penalty_loss:.6f}, model saved'
+        message = f'Epoch {ep} iter {iter}training finished, pose loss: {avg_pose_loss:.6f}, penalty_loss: {avg_penalty_loss:.6f}, model saved'
         print(message)
         logger.info(message)
 
@@ -318,7 +333,7 @@ def main():
             # Evaluate the model
             print('Evaluating the model')
             logger.info('Evaluating the model')
-            with torch.no_grad(): 
+            with torch.no_grad():
                 model.eval()
                 errors = tester.eval(model, selection='gumbel-softmax', num_gpu=len(gpu_ids))
         
@@ -333,41 +348,41 @@ def main():
                 if best < 10:
                     torch.save(model.state_dict(), f'{checkpoints_dir}/best_{best:.2f}.pth')
 
-            message = "Epoch {} evaluation Seq. 05 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, round(errors[0]['t_rel'], 4), round(errors[0]['r_rel'], 4), round(errors[0]['t_rmse'], 4), round(errors[0]['r_rmse'], 4))
+            message = "Epoch {} iter {} evaluation Seq. 05 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, iter, round(errors[0]['t_rel'], 4), round(errors[0]['r_rel'], 4), round(errors[0]['t_rmse'], 4), round(errors[0]['r_rmse'], 4))
             logger.info(message)
             print(message)
             if args.experiment_name != 'debug':
-                wandb.log({"5. t_rel": round(errors[0]['t_rel'], 4), "5. r_rel": round(errors[0]['r_rel'], 4), "5. t_rmse": round(errors[0]['t_rmse'], 4), "5. r_rmse": round(errors[0]['r_rmse'], 4)})
+                wandb.log({"Epoch": ep, "iter":iter, "5. t_rel": round(errors[0]['t_rel'], 4), "5. r_rel": round(errors[0]['r_rel'], 4), "5. t_rmse": round(errors[0]['t_rmse'], 4), "5. r_rmse": round(errors[0]['r_rmse'], 4)})
 
-            message = "Epoch {} evaluation Seq. 07 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, round(errors[1]['t_rel'], 4), round(errors[1]['r_rel'], 4), round(errors[1]['t_rmse'], 4), round(errors[1]['r_rmse'], 4))
+            message = "Epoch {} iter {} evaluation Seq. 07 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, iter, round(errors[1]['t_rel'], 4), round(errors[1]['r_rel'], 4), round(errors[1]['t_rmse'], 4), round(errors[1]['r_rmse'], 4))
             logger.info(message)
             print(message)
             if args.experiment_name != 'debug':
-                wandb.log({"7. t_rel": round(errors[1]['t_rel'], 4), "7. r_rel": round(errors[1]['r_rel'], 4), "7. t_rmse": round(errors[1]['t_rmse'], 4), "7. r_rmse": round(errors[1]['r_rmse'], 4)})
+                wandb.log({"Epoch": ep, "iter":iter, "7. t_rel": round(errors[1]['t_rel'], 4), "7. r_rel": round(errors[1]['r_rel'], 4), "7. t_rmse": round(errors[1]['t_rmse'], 4), "7. r_rmse": round(errors[1]['r_rmse'], 4)})
 
-            message = "Epoch {} evaluation Seq. 10 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, round(errors[2]['t_rel'], 4), round(errors[2]['r_rel'], 4), round(errors[2]['t_rmse'], 4), round(errors[2]['r_rmse'], 4))
+            message = "Epoch {} iter {} evaluation Seq. 10 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, iter, round(errors[2]['t_rel'], 4), round(errors[2]['r_rel'], 4), round(errors[2]['t_rmse'], 4), round(errors[2]['r_rmse'], 4))
             logger.info(message)
             print(message)
             if args.experiment_name != 'debug':
-                wandb.log({"10. t_rel": round(errors[2]['t_rel'], 4), "10. r_rel": round(errors[2]['r_rel'], 4), "10. t_rmse": round(errors[2]['t_rmse'], 4), "10. r_rmse": round(errors[2]['r_rmse'], 4)})
+                wandb.log({"Epoch": ep, "iter":iter, "10. t_rel": round(errors[2]['t_rel'], 4), "10. r_rel": round(errors[2]['r_rel'], 4), "10. t_rmse": round(errors[2]['t_rmse'], 4), "10. r_rmse": round(errors[2]['r_rmse'], 4)})
             
-            message = "Epoch {} evaluation Seq. 01 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, round(errors[2]['t_rel'], 4), round(errors[2]['r_rel'], 4), round(errors[2]['t_rmse'], 4), round(errors[2]['r_rmse'], 4))
+            message = "Epoch {} iter {} evaluation Seq. 01 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, iter, round(errors[3]['t_rel'], 4), round(errors[3]['r_rel'], 4), round(errors[3]['t_rmse'], 4), round(errors[3]['r_rmse'], 4))
             logger.info(message)
             print(message)
             if args.experiment_name != 'debug':
-                wandb.log({"01. t_rel": round(errors[2]['t_rel'], 4), "01. r_rel": round(errors[2]['r_rel'], 4), "01. t_rmse": round(errors[2]['t_rmse'], 4), "01. r_rmse": round(errors[2]['r_rmse'], 4)})
+                wandb.log({"Epoch": ep, "iter":iter, "01. t_rel": round(errors[3]['t_rel'], 4), "01. r_rel": round(errors[3]['r_rel'], 4), "01. t_rmse": round(errors[3]['t_rmse'], 4), "01. r_rmse": round(errors[3]['r_rmse'], 4)})
             
-            message = "Epoch {} evaluation Seq. 02 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, round(errors[2]['t_rel'], 4), round(errors[2]['r_rel'], 4), round(errors[2]['t_rmse'], 4), round(errors[2]['r_rmse'], 4))
+            message = "Epoch {} iter {} evaluation Seq. 02 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, iter, round(errors[4]['t_rel'], 4), round(errors[4]['r_rel'], 4), round(errors[4]['t_rmse'], 4), round(errors[4]['r_rmse'], 4))
             logger.info(message)
             print(message)
             if args.experiment_name != 'debug':
-                wandb.log({"02. t_rel": round(errors[2]['t_rel'], 4), "02. r_rel": round(errors[2]['r_rel'], 4), "02. t_rmse": round(errors[2]['t_rmse'], 4), "02. r_rmse": round(errors[2]['r_rmse'], 4)})
+                wandb.log({"Epoch": ep, "iter":iter, "02. t_rel": round(errors[4]['t_rel'], 4), "02. r_rel": round(errors[4]['r_rel'], 4), "02. t_rmse": round(errors[4]['t_rmse'], 4), "02. r_rmse": round(errors[4]['r_rmse'], 4)})
             
-            message = "Epoch {} evaluation Seq. 04 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, round(errors[2]['t_rel'], 4), round(errors[2]['r_rel'], 4), round(errors[2]['t_rmse'], 4), round(errors[2]['r_rmse'], 4))
+            message = "Epoch {} iter {} evaluation Seq. 04 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, iter, round(errors[5]['t_rel'], 4), round(errors[5]['r_rel'], 4), round(errors[5]['t_rmse'], 4), round(errors[5]['r_rmse'], 4))
             logger.info(message)
             print(message)
             if args.experiment_name != 'debug':
-                wandb.log({"04. t_rel": round(errors[2]['t_rel'], 4), "04. r_rel": round(errors[2]['r_rel'], 4), "04. t_rmse": round(errors[2]['t_rmse'], 4), "04. r_rmse": round(errors[2]['r_rmse'], 4)})
+                wandb.log({"Epoch": ep, "iter":iter, "04. t_rel": round(errors[5]['t_rel'], 4), "04. r_rel": round(errors[5]['r_rel'], 4), "04. t_rmse": round(errors[5]['t_rmse'], 4), "04. r_rmse": round(errors[5]['r_rmse'], 4)})
             
             logger.info(message)
             print(message)

@@ -110,7 +110,7 @@ class KITTI_tester():
             
             self.est.append({'pose_est_global':pose_est_global, 'pose_gt_global':pose_gt_global, 'decs':dec_est, 'probs':prob_est, 'speed':speed})
             self.errors.append({'t_rel':t_rel, 'r_rel':r_rel, 't_rmse':t_rmse, 'r_rmse':r_rmse, 'usage':usage})
-            
+            # np.savetxt(f'cvpr_seq{seq}_rel_pose_3dof.txt',pose_est[:,[3,5,1]])
         return self.errors
 
     def generate_plots(self, save_dir, window_size):
