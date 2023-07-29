@@ -5,16 +5,23 @@ import logging
 from path import Path
 from utils import custom_transform
 from dataset.KITTI_dataset import KITTI
-from model import DeepVIO, Encoder_CAM
+from model import DeepVIO, Encoder_CAM, SVIO_VO
 from collections import defaultdict
 from utils.kitti_eval import KITTI_tester
 import numpy as np
 import math
 import wandb 
 from vo_transformer import VisualOdometryTransformerActEmbed
+from torch.nn.parallel import DistributedDataParallel as DDP
+import torch.distributed as dist
+from torch.utils.data.distributed import DistributedSampler
+import torch.multiprocessing as mp
+EPSILON = 1e-8
+
 # from accelerate import Accelerator
 # accelerator = Accelerator(split_batches=True)
 # device = accelerator.device
+rank=0
 # os.environ['CUDA_VISIBLE_DEVICES']='0,2'
 # device = torch.device('cuda')
 
@@ -67,6 +74,7 @@ parser.add_argument('--patch_size', type=int, default=16, help='patch token size
 parser.add_argument('--T', type=int, default=2, help='time transformer T=2')
 parser.add_argument('--is_pretrained_mmae', type=bool, default=True, help='mmae backbone is_pretrained')
 parser.add_argument('--model_type',type=str, default='cvpr', help='model type:[cvpr,deepvio,tscam]')
+parser.add_argument('--use_cnn',default=False, action='store_true', help='use flownet get cls_token')
 
 args = parser.parse_args()
 
@@ -97,6 +105,7 @@ if args.experiment_name != 'debug':
         "T": args.T,
         "is_pretrained_mmae": args.is_pretrained_mmae,
         "model_type": args.model_type,
+        "use_cnn": args.use_cnn,
         }
     )
 
@@ -106,10 +115,7 @@ np.random.seed(args.seed)
 # 修改超参数，按照cvpr2023的设置
 def update_status(ep, args, model):
     if ep < args.epochs_warmup:  # Warmup stage
-        # 增加自己warmup代码
-        lr_d = args.lr_warmup / 10
-        lr = lr_d * (ep + 1)
-        # lr = args.lr_warmup
+        lr = args.lr_warmup
         selection = 'random'
         temp = args.temp_init
         # for param in model.module.Policy_net.parameters(): # Disable the policy network
@@ -126,7 +132,109 @@ def update_status(ep, args, model):
         temp = args.temp_init * math.exp(-args.eta * (ep-args.epochs_warmup))
     return lr, selection, temp
 
-def train(model, optimizer, train_loader, selection, temp, logger, ep, iter, p=0.5, weighted=False):
+def eulerAnglesToRotationMatrix_torch(theta, device):
+    '''
+    Calculate the rotation matrix from eular angles (roll, yaw, pitch)
+    '''
+    theta = theta.squeeze(0)
+    R_x = torch.stack((torch.tensor(1).to(device),torch.tensor(0).to(device),torch.tensor(0).to(device),
+                    torch.tensor(0).to(device), torch.cos(theta[0]), -torch.sin(theta[0]),
+                    torch.tensor(0).to(device), torch.sin(theta[0]), torch.cos(theta[0]))
+                    ).reshape(3,3)
+    R_y = torch.stack((torch.cos(theta[1]), torch.tensor(0).to(device), torch.sin(theta[1]),
+                    torch.tensor(0).to(device), torch.tensor(1).to(device), torch.tensor(0).to(device),
+                    -torch.sin(theta[1]), torch.tensor(0).to(device), torch.cos(theta[1]))
+                    ).reshape(3,3)
+    R_z = torch.stack((torch.cos(theta[2]), -torch.sin(theta[2]), torch.tensor(0).to(device),
+                    torch.sin(theta[2]), torch.cos(theta[2]), torch.tensor(0).to(device),
+                    torch.tensor(0).to(device), torch.tensor(0).to(device), torch.tensor(1).to(device))
+                    ).reshape(3,3)
+    R = torch.matmul(R_z, torch.matmul(R_y, R_x))
+    return R
+
+# 几何一致性损失
+def compute_geo_invariance_inverse_loss(model_pred_forward_pose, model_pred_backward_pose, device):
+    # pose=[b,1,6]
+    loss=0
+    # inversion constraint for rotation: dyaw_cur_rel_to_prev = -dyaw_prev_rel_to_cur
+    geo_inverse_rot_diffs = (model_pred_forward_pose[:, :, :3] - model_pred_backward_pose[:, :, :3]) ** 2
+    loss_geo_inverse_rot = torch.mean(geo_inverse_rot_diffs)
+    abs_diff_geo_inverse_rot = torch.mean(
+            torch.sqrt(geo_inverse_rot_diffs.detach())
+        )
+    rot_mat_prev_rel_to_cur = []
+    for i in range(model_pred_forward_pose.shape[0]):
+        rot_mat_prev_rel_to_cur.append(eulerAnglesToRotationMatrix_torch(model_pred_backward_pose[i,:, :3],device))
+    rot_mat_prev_rel_to_cur = torch.stack(rot_mat_prev_rel_to_cur)
+    # inversion constraint for position: pos_prev_rel_to_cur = - R_{prev_rel_to_cur} * pos_cur_rel_to_prev
+    pred_pos_prev_rel_to_cur = torch.matmul(
+            rot_mat_prev_rel_to_cur,  # [batch, 3, 3]
+            model_pred_forward_pose[:, :, 3:].permute(0,2,1)  # [batch, 3, 1]
+        ).squeeze(-1)
+    geo_inverse_pos_diffs = (
+            model_pred_backward_pose[:, 0, 3:] + pred_pos_prev_rel_to_cur
+        ) ** 2
+    loss_geo_inverse_pos = torch.mean(geo_inverse_pos_diffs)
+    abs_diff_geo_inverse_pos = torch.mean(
+            torch.sqrt(geo_inverse_pos_diffs.detach()), dim=0
+        )
+    
+    loss_geo_inverse = loss_geo_inverse_rot + loss_geo_inverse_pos
+    return loss_geo_inverse, abs_diff_geo_inverse_rot, abs_diff_geo_inverse_pos
+
+def compute_loss(gt_poses, pred_poses, iter, epoch, rank, name):
+    gt_poses, pred_poses = gt_poses.cpu().detach().numpy(), pred_poses.cpu().detach().numpy()
+    gt_roll_x, gt_pitch_y, gt_yaw_z, gt_delta_x, gt_delta_y, gt_delta_z = gt_poses[:, 0, 0], gt_poses[:, 0, 1], gt_poses[:, 0, 2], gt_poses[:, 0, 3], gt_poses[:, 0, 4], gt_poses[:, 0, 5]
+    pred_roll_x, pred_pitch_y, pred_yaw_z, pred_delta_x, pred_delta_y, pred_delta_z = pred_poses[:,0,0], pred_poses[:,0,1], pred_poses[:,0,2], pred_poses[:,0,3], pred_poses[:,0,4], pred_poses[:,0,5]
+    # pos_x
+    delta_x_diffs = (gt_delta_x - pred_delta_x) ** 2
+    loss_dx = np.mean(delta_x_diffs)
+    target_magnitude_dx = np.mean(np.abs(gt_delta_x)) + EPSILON
+    abs_diff_dx = np.mean(np.sqrt(delta_x_diffs))
+    relative_diff_dx = abs_diff_dx / target_magnitude_dx
+    # pos_y
+    delta_y_diffs = (gt_delta_y - pred_delta_y) ** 2
+    loss_dy = np.mean(delta_y_diffs)
+    target_magnitude_dy = np.mean(np.abs(gt_delta_y)) + EPSILON
+    abs_diff_dy = np.mean(np.sqrt(delta_y_diffs))
+    relative_diff_dy = abs_diff_dy / target_magnitude_dy
+    # pos_z
+    delta_z_diffs = (gt_delta_z - pred_delta_z) ** 2
+    loss_dz = np.mean(delta_z_diffs)
+    target_magnitude_dz = np.mean(np.abs(gt_delta_z)) + EPSILON
+    abs_diff_dz = np.mean(np.sqrt(delta_z_diffs))
+    relative_diff_dz = abs_diff_dz / target_magnitude_dz
+    # roll_x
+    delta_roll_x_diffs = (gt_roll_x - pred_roll_x) ** 2
+    loss_roll_x = np.mean(delta_roll_x_diffs)
+    target_magnitude_roll_x = np.mean(np.abs(gt_roll_x)) + EPSILON
+    abs_diff_roll_x = np.mean(np.sqrt(delta_roll_x_diffs))
+    relative_diff_droll_x = abs_diff_roll_x / target_magnitude_roll_x
+    # pitch_y
+    delta_pitch_y_diffs = (gt_pitch_y - pred_pitch_y) ** 2
+    loss_pitch_y = np.mean(delta_pitch_y_diffs)
+    target_magnitude_pitch_y = np.mean(np.abs(gt_pitch_y)) + EPSILON
+    abs_diff_pitch_y = np.mean(np.sqrt(delta_pitch_y_diffs))
+    relative_diff_dpitch_y = abs_diff_pitch_y / target_magnitude_pitch_y
+    # yaw_z
+    delta_yaw_z_diffs = (gt_yaw_z - pred_yaw_z) ** 2
+    loss_yaw_z = np.mean(delta_yaw_z_diffs)
+    target_magnitude_yaw_z = np.mean(np.abs(gt_yaw_z)) + EPSILON
+    abs_diff_yaw_z = np.mean(np.sqrt(delta_yaw_z_diffs))
+    relative_diff_dyaw_z = abs_diff_yaw_z / target_magnitude_yaw_z
+
+    wandb.log({"Epoch": epoch, "iter": iter, name+"_abs_diff_dx": abs_diff_dx, name+"_target_magnitude_dx":target_magnitude_dx, name+"_relative_diff_dx": relative_diff_dx, \
+                name+"_abs_diff_dy": abs_diff_dy, name+"_target_magnitude_dy":target_magnitude_dy, name+"_relative_diff_dy":relative_diff_dy, \
+                name+"_abs_diff_dz": abs_diff_dz, name+"_target_magnitude_dz":target_magnitude_dz, name+"_relative_diff_dz":relative_diff_dz, \
+                name+"_abs_diff_roll_x": abs_diff_roll_x, name+"_target_magnitude_roll_x":target_magnitude_roll_x, name+"_relative_diff_droll_x":relative_diff_droll_x, \
+                name+"_abs_diff_pitch_y": abs_diff_pitch_y, name+"_target_magnitude_pitch_y":target_magnitude_pitch_y, name+"_relative_diff_dpitch_y":relative_diff_dpitch_y, \
+                name+"_abs_diff_yaw_z": abs_diff_yaw_z, name+"_target_magnitude_yaw_z":target_magnitude_yaw_z, name+"_relative_diff_dyaw_z":relative_diff_dyaw_z
+               })
+    # return abs_diff_dx, target_magnitude_dx, relative_diff_dx, abs_diff_dy, target_magnitude_dy, relative_diff_dy \
+    #     , abs_diff_dz, target_magnitude_dz, relative_diff_dz, abs_diff_roll_x, target_magnitude_roll_x, relative_diff_droll_x \
+    #     , abs_diff_pitch_y, target_magnitude_pitch_y, relative_diff_dpitch_y, abs_diff_yaw_z, target_magnitude_yaw_z, relative_diff_dyaw_z
+
+def train(model, optimizer, train_loader, selection, temp, logger, ep, iter, p=0.5, weighted=False, rank=0, model_type='cvpr'):
     
     mse_losses = []
     penalties = []
@@ -145,18 +253,31 @@ def train(model, optimizer, train_loader, selection, temp, logger, ep, iter, p=0
         # pose, decision, prob = model(imgs)
         # 单单为添加为了mmae cvpr23所做的准备，别的模型删掉这些。
         batch_size,seq_len = imgs.shape[0], imgs.shape[1]
-        # 单卡使用这个device
         device = imgs.device
         decisions = torch.zeros(batch_size, seq_len, 2).to(device)
         probs = torch.zeros(batch_size, seq_len, 2).to(device)
-        poses = []
-        two_imgs = torch.cat((imgs[:, :-1], imgs[:, 1:]), dim=2)
-        for j in range(two_imgs.shape[1]):
-            img = {'rgb':two_imgs[:,j]} # 连续两帧
-            pose = model(img)
-            poses.append(pose)
-        poses = torch.stack(poses,dim=0).to(device)
-        poses = poses.permute(1,0,2)
+        if model_type != 'deepvio' and model_type != "svio_vo":
+            poses, pose_backward = [], []
+            two_imgs_forward = torch.cat((imgs[:, :-1], imgs[:, 1:]), dim=2)
+            two_imgs_backward = torch.cat((imgs[:, 1:], imgs[:, :-1]), dim=2)#额外添加
+
+            for j in range(two_imgs_forward.shape[1]):
+                img_forward = {'rgb':two_imgs_forward[:,j]} # 连续两帧
+                # img_backward = {'rgb':two_imgs_backward[:,j]} # 连续两帧 #额外添加
+                pose = model(img_forward)
+                # pose_back = model(img_backward)#额外添加
+                poses.append(pose)
+                # pose_backward.append(pose_back)#额外添加
+                poses = torch.stack(poses,dim=0).to(device)
+                # pose_backward = torch.stack(pose_backward,dim=0).to(device)#额外添加
+                poses = poses.permute(1,0,2)
+        elif model_type == "deepvio" or model_type == "svio_vo":
+            poses = model(imgs)
+
+        # wandb.log delta_x,delta_y,delta_yaw
+        if rank == 0 and args.experiment_name != "debug":
+            compute_loss(gts, pred_poses=poses, iter=iter, epoch=ep, rank=rank, name="train")
+        # pose_backward = pose_backward.permute(1,0,2)#额外添加
         if not weighted:
             angle_loss = torch.nn.functional.mse_loss(poses[:,:,:3], gts[:, :, :3])
             translation_loss = torch.nn.functional.mse_loss(poses[:,:,3:], gts[:, :, 3:])
@@ -165,10 +286,16 @@ def train(model, optimizer, train_loader, selection, temp, logger, ep, iter, p=0
             angle_loss = (weight.unsqueeze(-1).unsqueeze(-1) * (poses[:,:,:3] - gts[:, :, :3]) ** 2).mean()
             translation_loss = (weight.unsqueeze(-1).unsqueeze(-1) * (poses[:,:,3:] - gts[:, :, 3:]) ** 2).mean()
         
-        pose_loss = 100 * angle_loss + translation_loss    
+        # 增加一致性损失，cvpr的额外损失
+        # geo_inverse_loss, abs_diff_geo_inverse_rot, abs_diff_geo_inverse_pos = compute_geo_invariance_inverse_loss(poses, pose_backward,device)
+        if model_type == "cvpr":
+            pose_loss = angle_loss + translation_loss
+        else:
+            pose_loss = 100 * angle_loss + translation_loss    
         pose_loss = pose_loss.float()    
         penalty = (decisions[:,:,0].float()).sum(-1).mean()
         # loss = pose_loss + args.Lambda * penalty 
+        # loss = pose_loss + geo_inverse_loss
         loss = pose_loss
 
         loss.backward()
@@ -177,9 +304,11 @@ def train(model, optimizer, train_loader, selection, temp, logger, ep, iter, p=0
 
         iter = iter + 1
         if i % args.print_frequency == 0: 
+            # message = f'Epoch: {ep}, iters: {i}/{data_len}, iter: {iter}/{data_len}, pose loss: {pose_loss.item():.6f}, penalty: {penalty.item():.6f}, loss: {loss.item():.6f}, geo_inverse_loss: {geo_inverse_loss.item():.6f}, abs_diff_geo_inverse_rot: {abs_diff_geo_inverse_rot.item():.6f}, abs_diff_geo_inverse_pos_x: {abs_diff_geo_inverse_pos[0].item():.6f}, abs_diff_geo_inverse_pos_y: {abs_diff_geo_inverse_pos[1].item():.6f}, abs_diff_geo_inverse_pos_z: {abs_diff_geo_inverse_pos[2].item():.6f}'
             message = f'Epoch: {ep}, iters: {i}/{data_len}, iter: {iter}/{data_len}, pose loss: {pose_loss.item():.6f}, penalty: {penalty.item():.6f}, loss: {loss.item():.6f}'
             print(message)
             if args.experiment_name != 'debug':
+                # wandb.log({"Epoch": ep, "iters": i, "iter": iter, "pose loss": pose_loss.item(),"penalty": penalty, "angle loss": angle_loss.item(), "translation loss": translation_loss.item(), "loss": loss.item(), "geo_inverse_loss": geo_inverse_loss.item(), "abs_diff_geo_inverse_rot": abs_diff_geo_inverse_rot.item(), "abs_diff_geo_inverse_pos_x": abs_diff_geo_inverse_pos[0].item(), "abs_diff_geo_inverse_pos_y": abs_diff_geo_inverse_pos[1].item(), "abs_diff_geo_inverse_pos_z": abs_diff_geo_inverse_pos[2].item()})
                 wandb.log({"Epoch": ep, "iters": i, "iter": iter, "pose loss": pose_loss.item(),"penalty": penalty, "angle loss": angle_loss.item(), "translation loss": translation_loss.item(), "loss": loss.item()})
             logger.info(message)
 
@@ -188,10 +317,22 @@ def train(model, optimizer, train_loader, selection, temp, logger, ep, iter, p=0
 
     return np.mean(mse_losses), np.mean(penalties), iter
 
+def setup(rank, world_size):
+    os.environ['MASTER_ADDR'] = 'localhost'
+    os.environ['MASTER_PORT'] = '12355'
 
+    # initialize the process group
+    dist.init_process_group("nccl", rank=rank, world_size=world_size)
+
+def cleanup():
+    dist.destroy_process_group()
+# def main(rank, world_size):
 def main():
+
     iter = 0
     ep = 0
+
+    # setup(rank, world_size)
     # Create Dir
     experiment_dir = Path('./results')
     experiment_dir.mkdir_p()
@@ -229,13 +370,28 @@ def main():
                         transform=transform_train
                         )
     logger.info('train_dataset: ' + str(train_dataset))
-    
+
+    # local_rank = torch.distributed.get_rank()
+    # torch.cuda.set_device(local_rank)
+    # device = torch.device('cuda', local_rank)
+    # Model initialization
+    if args.model_type == 'deepvio':
+        model = DeepVIO(args)
+    elif args.model_type == 'cvpr':
+        model = VisualOdometryTransformerActEmbed(cls_action=False, is_pretrained_mmae=args.is_pretrained_mmae)
+    elif args.model_type == 'tscam':
+        # 可视化所使用模型
+        model = Encoder_CAM(args)
+    elif args.model_type == 'svio_vo':
+        model = SVIO_VO(args)
+    # sampler = DistributedSampler(train_dataset)
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=args.batch_size,
         shuffle=True,
         num_workers=args.workers,
-        pin_memory=True
+        pin_memory=True,
+        # sampler=sampler
     )
     
     # GPU selections
@@ -251,14 +407,6 @@ def main():
     # Initialize the tester
     tester = KITTI_tester(args)
 
-    # Model initialization
-    if args.model_type == 'deepvio':
-        model = DeepVIO(args)
-    elif args.model_type == 'cvpr':
-        model = VisualOdometryTransformerActEmbed(cls_action=False, is_pretrained_mmae=args.is_pretrained_mmae)
-    elif args.model_type == 'tscam':
-        # 可视化所使用模型
-        model = Encoder_CAM(args)
 
     # 2023/6/27先不加入imu，也不使用action，只是使用multivit预训练模型，是否会对我性能产生正面的影响
 
@@ -275,10 +423,16 @@ def main():
         print('Training from scratch')
         logger.info('Training from scratch')
     # 其他部分参数不更新，只更新head部分
-    for param in model.parameters():
-        param.requires_grad = False
-    for param in model.head.parameters():
-        param.requires_grad = True
+    # for param in model.parameters():
+    #     param.requires_grad = False
+    # for param in model.vit.encoder[9].parameters():
+    #     param.requires_grad = True
+    # for param in model.vit.encoder[10].parameters():
+    #     param.requires_grad = True
+    # for param in model.vit.encoder[11].parameters():
+    #     param.requires_grad = True
+    # for param in model.head.parameters():
+    #     param.requires_grad = True
 
     # Use the pre-trained flownet or not
     if args.pretrain_flownet and args.pretrain is None:
@@ -301,10 +455,12 @@ def main():
     # Feed model to GPU
     model.cuda(gpu_ids[0])
     model = torch.nn.DataParallel(model, device_ids = gpu_ids)
+    # model = model.to(rank)
+    # model = torch.nn.parallel.DistributedDataParallel(model,device_ids=[rank])
     # model, optimizer, train_loader = accelerator.prepare(model, optimizer, train_loader)
 
     pretrain = args.pretrain 
-    init_epoch = int(pretrain[-7:-4])+1 if args.pretrain is not None and args.model_type!='cvpr' else 0    
+    init_epoch = int(pretrain[-7:-4])+1 if args.pretrain is not None else 0    
     iter = init_epoch*(len(train_loader) // args.batch_size + 1) if args.pretrain is not None else 0
     
     best = 10000
@@ -317,12 +473,14 @@ def main():
         logger.info(message)
 
         model.train()
-        avg_pose_loss, avg_penalty_loss, iter = train(model, optimizer, train_loader, selection, temp, logger, ep, iter, p=0.5)
+        avg_pose_loss, avg_penalty_loss, iter = train(model, optimizer, train_loader, selection, temp, logger, ep, iter, p=0.5, rank=rank, model_type=args.model_type)
 
         # Save the model after training
+        # if rank==0:
         if(os.path.isfile(f'{checkpoints_dir}/{(ep-1):003}.pth') and ep%10!=1):
             os.remove(f'{checkpoints_dir}/{(ep-1):003}.pth')
         torch.save(model.state_dict(), f'{checkpoints_dir}/{ep:003}.pth')
+        # dist.barrier()
         # Save the model after training
         message = f'Epoch {ep} iter {iter}training finished, pose loss: {avg_pose_loss:.6f}, penalty_loss: {avg_penalty_loss:.6f}, model saved'
         print(message)
@@ -391,5 +549,10 @@ def main():
     logger.info(message)
     print(message)
 
+
+
 if __name__ == "__main__":
+    #DDP
+    # world_size = torch.cuda.device_count()
+    # torch.multiprocessing.spawn(main, args=(world_size,), nprocs=world_size, join=True)
     main()

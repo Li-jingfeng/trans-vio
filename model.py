@@ -11,6 +11,7 @@ import torch.nn.functional as F
 from utils.utils import Block, Attention, trunc_normal_
 from einops.layers.torch import Rearrange
 from einops import rearrange, repeat
+from utils.utils import Encoder_VO, Pose_RNN_VO
 
 # cvpr2023 vo-transformer模型
 
@@ -630,7 +631,47 @@ class DeepVIO(nn.Module):
         probs = torch.nn.functional.softmax(logits, dim=-1)
 
         return poses, decisions, probs, hc
+# deepvio -> vo(seq==2)
+class SVIO_VO(nn.Module):
+    def __init__(self, opt):
+        super(SVIO_VO, self).__init__()
 
+        self.Feature_net = Encoder_VO(opt)
+        self.Pose_net = Pose_RNN_VO(opt)
+        self.opt = opt
+        
+        initialization(self)
+
+    def forward(self, img, is_first=True, hc=None, temp=5, selection='gumbel-softmax', p=0.5):
+
+        fv = self.Feature_net(img)
+        batch_size = fv.shape[0]
+        seq_len = fv.shape[1]
+
+        poses, decisions, logits= [], [], []
+        hidden = torch.zeros(batch_size, self.opt.rnn_hidden_size).to(fv.device) if hc is None else hc[0].contiguous()[:, -1, :]
+        fv_alter = torch.zeros_like(fv) # zero padding in the paper, can be replaced by other 
+        
+        for i in range(seq_len):
+            if i == 0 and is_first:
+                # The first relative pose is estimated by both images and imu by default
+                pose, hc = self.Pose_net(fv[:, i:i+1, :], hc)
+            else:
+                # Otherwise, sample the decision from the policy network
+                p_in = torch.cat((fi[:, i, :], hidden), -1)
+                logit, decision = self.Policy_net(p_in.detach(), temp)
+                decision = decision.unsqueeze(1)
+                logit = logit.unsqueeze(1)
+                pose, hc = self.Pose_net(fv[:, i:i+1, :], fv_alter[:, i:i+1, :], fi[:, i:i+1, :], decision, hc)
+                decisions.append(decision)
+                logits.append(logit)
+            poses.append(pose)
+            hidden = hc[0].contiguous()[:, -1, :]
+
+        poses = torch.cat(poses, dim=1)
+
+
+        return poses
 
 def initialization(net):
     #Initilization

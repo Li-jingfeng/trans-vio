@@ -19,7 +19,7 @@ parser.add_argument('--save_dir', type=str, default='./results', help='path to s
 parser.add_argument('--seq_len', type=int, default=11, help='sequence length for LSTM')
 
 parser.add_argument('--train_seq', type=list, default=['00', '01', '02', '04', '06', '08', '09'], help='sequences for training')
-parser.add_argument('--val_seq', type=list, default=['05'], help='sequences for validation')
+parser.add_argument('--val_seq', type=list, default=['04'], help='sequences for validation')
 parser.add_argument('--seed', type=int, default=0, help='random seed')
 
 parser.add_argument('--img_w', type=int, default=512, help='image width')
@@ -39,6 +39,7 @@ parser.add_argument('--model', type=str, default='./model_zoo/vf_512_if_256_3e-0
 parser.add_argument('--patch_size', type=int, default=16, help='patch token size')
 parser.add_argument('--T', type=int, default=2, help='time transformer T=2')
 parser.add_argument('--is_pretrained_mmae', type=bool, default=False, help='mmae backbone is_pretrained')
+parser.add_argument('--model_type',type=str, default='cvpr', help='model type:[cvpr,deepvio,tscam]')
 
 args = parser.parse_args()
 

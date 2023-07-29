@@ -11,6 +11,8 @@ import math
 import torch.nn as nn
 from einops import rearrange, repeat
 import warnings
+from torch.autograd import Variable
+
 
 TORCH_MAJOR = int(torch.__version__.split('.')[0])
 TORCH_MINOR = int(torch.__version__.split('.')[1])
@@ -467,7 +469,7 @@ def _no_grad_trunc_normal_(tensor, mean, std, a, b):
         tensor.clamp_(min=a, max=b)
         return tensor
 def trunc_normal_(tensor, mean=0., std=1., a=-2., b=2.):
-    # type: (Tensor, float, float, float, float) -> Tensor
+
     r"""Fills the input Tensor with values drawn from a truncated
     normal distribution. The values are effectively drawn from the
     normal distribution :math:`\mathcal{N}(\text{mean}, \text{std}^2)`
@@ -485,3 +487,94 @@ def trunc_normal_(tensor, mean=0., std=1., a=-2., b=2.):
         >>> nn.init.trunc_normal_(w)
     """
     return _no_grad_trunc_normal_(tensor, mean, std, a, b)
+
+def conv(batchNorm, in_planes, out_planes, kernel_size=3, stride=1, dropout=0):
+    if batchNorm:
+        return nn.Sequential(
+            nn.Conv2d(in_planes, out_planes, kernel_size=kernel_size, stride=stride, padding=(kernel_size - 1) // 2, bias=False),
+            nn.BatchNorm2d(out_planes),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.Dropout(dropout)  # , inplace=True)
+        )
+    else:
+        return nn.Sequential(
+            nn.Conv2d(in_planes, out_planes, kernel_size=kernel_size, stride=stride, padding=(kernel_size - 1) // 2, bias=True),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.Dropout(dropout)  # , inplace=True)
+        )
+
+class Encoder_VO(nn.Module):
+    def __init__(self, opt):
+        super(Encoder_VO, self).__init__()
+        # CNN
+        self.opt = opt
+        self.conv1 = conv(True, 6, 64, kernel_size=7, stride=2, dropout=0.2)
+        self.conv2 = conv(True, 64, 128, kernel_size=5, stride=2, dropout=0.2)
+        self.conv3 = conv(True, 128, 256, kernel_size=5, stride=2, dropout=0.2)
+        self.conv3_1 = conv(True, 256, 256, kernel_size=3, stride=1, dropout=0.2)
+        self.conv4 = conv(True, 256, 512, kernel_size=3, stride=2, dropout=0.2)
+        self.conv4_1 = conv(True, 512, 512, kernel_size=3, stride=1, dropout=0.2)
+        self.conv5 = conv(True, 512, 512, kernel_size=3, stride=2, dropout=0.2)
+        self.conv5_1 = conv(True, 512, 512, kernel_size=3, stride=1, dropout=0.2)
+        self.conv6 = conv(True, 512, 1024, kernel_size=3, stride=2, dropout=0.5)
+        # Comput the shape based on diff image size
+        __tmp = Variable(torch.zeros(1, 6, opt.img_w, opt.img_h))
+        __tmp = self.encode_image(__tmp)
+
+        self.visual_head = nn.Linear(int(np.prod(__tmp.size())), opt.v_f_len)
+
+    def forward(self, img):
+        v = torch.cat((img[:, :-1], img[:, 1:]), dim=2)
+        batch_size = v.size(0)
+        seq_len = v.size(1)
+
+        # image CNN
+        v = v.view(batch_size * seq_len, v.size(2), v.size(3), v.size(4))
+        v = self.encode_image(v)
+        v = v.view(batch_size, seq_len, -1)  # (batch, seq_len, fv)
+        v = self.visual_head(v)  # (batch, seq_len, 256)
+    
+        return v
+
+    def encode_image(self, x):
+        out_conv2 = self.conv2(self.conv1(x))
+        out_conv3 = self.conv3_1(self.conv3(out_conv2))
+        out_conv4 = self.conv4_1(self.conv4(out_conv3))
+        out_conv5 = self.conv5_1(self.conv5(out_conv4))
+        out_conv6 = self.conv6(out_conv5)
+        return out_conv6
+
+# The pose estimation network
+class Pose_RNN_VO(nn.Module):
+    def __init__(self, opt):
+        super(Pose_RNN_VO, self).__init__()
+
+        # The main RNN network
+        f_len = opt.v_f_len
+        self.rnn = nn.LSTM(
+            input_size=f_len,
+            hidden_size=opt.rnn_hidden_size,
+            num_layers=2,
+            dropout=opt.rnn_dropout_between,
+            batch_first=True)
+
+        # The output networks
+        self.rnn_drop_out = nn.Dropout(opt.rnn_dropout_out)
+        self.regressor = nn.Sequential(
+            nn.Linear(opt.rnn_hidden_size, 128),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.Linear(128, 6))
+
+    def forward(self, fv, prev=None):
+        if prev is not None:
+            prev = (prev[0].transpose(1, 0).contiguous(), prev[1].transpose(1, 0).contiguous())
+        
+        # Select between fv and fv_alter
+        fused = fv
+        
+        out, hc = self.rnn(fused) if prev is None else self.rnn(fused, prev)
+        out = self.rnn_drop_out(out)
+        pose = self.regressor(out)
+
+        hc = (hc[0].transpose(1, 0).contiguous(), hc[1].transpose(1, 0).contiguous())
+        return pose, hc

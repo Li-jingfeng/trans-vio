@@ -78,17 +78,22 @@ class KITTI_tester():
             x_in = image_seq.unsqueeze(0).repeat(num_gpu,1,1,1,1).cuda()
             i_in = imu_seq.unsqueeze(0).repeat(num_gpu,1,1).cuda()
             # for cvpr2023 mmae
-            two_imgs = torch.cat((x_in[:, :-1], x_in[:, 1:]), dim=2)
             decision = torch.zeros(x_in.shape[0], x_in.shape[1], 2).to(x_in.device)
             probs = torch.zeros(x_in.shape[0], x_in.shape[1], 2).to(x_in.device)
             pose_seq = []
             with torch.no_grad():
-                # pose, decision, probs, hc = net(x_in, i_in, is_first=(i==0), hc=hc, selection=selection, p=p)
-                # tscam encoder
-                # pose, decision, probs = net(x_in) 
-                for i in range(two_imgs.shape[1]):
-                    img = {'rgb':two_imgs[:,i]}
-                    pose = net(img)
+                if self.args.model_type == "cvpr":
+                    two_imgs = torch.cat((x_in[:, :-1], x_in[:, 1:]), dim=2)
+                    # pose, decision, probs, hc = net(x_in, i_in, is_first=(i==0), hc=hc, selection=selection, p=p)
+                    # tscam encoder
+                    # pose, decision, probs = net(x_in) 
+                    for i in range(two_imgs.shape[1]):
+                        img = {'rgb':two_imgs[:,i]}
+                        pose = net(img)
+                        pose_seq.append(pose)
+                elif self.args.model_type == "svio_vo":
+                    pose = net(x_in)
+                    pose = pose.squeeze(1)
                     pose_seq.append(pose)
             pose_seq = torch.stack(pose_seq,dim=1).to(x_in.device)
             pose_list.append(pose_seq[0,:,:].detach().cpu().numpy())
@@ -110,7 +115,7 @@ class KITTI_tester():
             
             self.est.append({'pose_est_global':pose_est_global, 'pose_gt_global':pose_gt_global, 'decs':dec_est, 'probs':prob_est, 'speed':speed})
             self.errors.append({'t_rel':t_rel, 'r_rel':r_rel, 't_rmse':t_rmse, 'r_rmse':r_rmse, 'usage':usage})
-            # np.savetxt(f'cvpr_seq{seq}_rel_pose_3dof.txt',pose_est[:,[3,5,1]])
+            # np.savetxt(f'cvpr_seq{seq}_rel_pose_3dof_xypitchz.txt',pose_est[:,[3,4,2]])
         return self.errors
 
     def generate_plots(self, save_dir, window_size):
@@ -122,7 +127,7 @@ class KITTI_tester():
                         self.est[i]['decs'], 
                         self.est[i]['speed'], 
                         window_size)
-    
+
     def save_text(self, save_dir):
         for i, seq in enumerate(self.args.val_seq):
             path = save_dir/'{}_pred.txt'.format(seq)
