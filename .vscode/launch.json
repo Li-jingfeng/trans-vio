@@ -11,9 +11,9 @@
             "program": "${workspaceFolder}/train.py",
             "console": "integratedTerminal",
             "justMyCode": false,
-            "env": {"CUDA_VISIBLE_DEVICES":"2,3"},
+            "env": {"CUDA_VISIBLE_DEVICES":"0"},
             "args": [
-                "--gpu_ids","0,1",
+                "--gpu_ids","0",
                 "--batch_size","128",
                 "--data_dir","./data",
                 "--experiment_name","debug",
@@ -25,6 +25,8 @@
                 // "--pretrain","./model_zoo/remove_module_fix_model.pth",
                 "--img_w","341",
                 "--img_h","192",
+                "--pretrain_flownet","./model_zoo/flownets_bn_EPE2.459.pth.tar",
+                "--use_cnn",
             ]
         },
         {
@@ -61,11 +63,14 @@
                 "--data_dir","./data",
                 "--experiment_name","debug",
                 "--seq_len","2",
-                "--workers", "4",
+                "--workers", "16",
                 "--patch_size","16",
                 "--model_type","cvpr",
-                "--model","./results/new_b128_mmae_pretrained/checkpoints/478.pth",
+                "--model","./results/add_flownet_cls_token/checkpoints/000.pth",
                 "--is_pretrained_mmae","False",
+                "--use_cnn",
+                "--img_w","341",
+                "--img_h","192",
             ]
         },
         {

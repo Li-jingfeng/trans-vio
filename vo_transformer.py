@@ -18,6 +18,7 @@ import PIL
 # from pointnav_vo.model_utils.visual_encoders import resnet
 from running_mean_and_var import RunningMeanAndVar
 from common_vars import *
+from utils.utils import flownet_cls_token
 
 # # from dpt.dpt_depth import DPTDepthModel
 # from pointnav_vo.depth_estimator.modules.midas.dpt_depth import DPTDepthModel
@@ -44,17 +45,17 @@ class VisualOdometryTransformerActEmbed(nn.Module):
         n_acts=N_ACTS,
         depth_aux_loss = False,
         is_pretrained_mmae = True,
+        use_cnn=False,
         **kwargs
     ):
         super().__init__()
-        
+        self.use_cnn = use_cnn
         self.cls_action = cls_action
         self.pretrain_backbone = pretrain_backbone
         self.observation_space = observation_space
         self.observation_strip = observation_strip
         self.observation_strip_proba = observation_strip_proba
         self.depth_aux_loss = depth_aux_loss
-
         self.obs_size_single = obs_size_single
         if ("rgb" in self.observation_space and "depth" in self.observation_space and not self.depth_aux_loss) \
         or (self.observation_space.count("rgb") == 2) or (self.observation_space.count("depth") == 2):
@@ -68,7 +69,9 @@ class VisualOdometryTransformerActEmbed(nn.Module):
             'small': 384,
             'base': 768,
         }
-
+        # 添加flownet cls_token
+        if use_cnn:
+            self.Feature_net = flownet_cls_token(img_h=192,img_w=341,cls_token_len=self.feature_dimensions[backbone])
         # NOTE
         hidden_size = self.feature_dimensions[backbone] // 2
 
@@ -346,7 +349,7 @@ class VisualOdometryTransformerActEmbed(nn.Module):
 
 
     # def forward(self, observation_pairs, actions, return_depth=False, return_attention=False):
-    def forward(self, observation_pairs, imus=None, return_depth=False, return_attention=False):
+    def forward(self, observation_pairs, imus=None, return_depth=False, return_attention=False, use_cnn=False):
         
         drop_obs = []
         for obs in observation_pairs.keys():
@@ -354,7 +357,9 @@ class VisualOdometryTransformerActEmbed(nn.Module):
                 drop_obs += [obs]
         for obs in drop_obs:
             del observation_pairs[obs]
-
+        # 这里是使用341，192的尺寸
+        if use_cnn:
+            cls_token = self.Feature_net(observation_pairs["rgb"])
         rgb, depth = self.preprocess(observation_pairs)
         
         if self.pretrain_backbone == 'mmae': # and  "rgb" in observation_pairs.keys() and "depth" in observation_pairs.keys():
@@ -382,7 +387,7 @@ class VisualOdometryTransformerActEmbed(nn.Module):
             if self.cls_action:# cls_action和actions是什么样的关系？
                 features = self.vit.forward(input_dict, actions, self.EMBED_DIM)[:,-1]
             else:
-                features = self.vit.forward(input_dict)[:,-1]
+                features = self.vit.forward(input_dict, use_cnn=self.use_cnn, flow_tokens=cls_token.unsqueeze(1))[:,-1]
 
         else:
 

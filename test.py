@@ -40,6 +40,7 @@ parser.add_argument('--patch_size', type=int, default=16, help='patch token size
 parser.add_argument('--T', type=int, default=2, help='time transformer T=2')
 parser.add_argument('--is_pretrained_mmae', type=bool, default=False, help='mmae backbone is_pretrained')
 parser.add_argument('--model_type',type=str, default='cvpr', help='model type:[cvpr,deepvio,tscam]')
+parser.add_argument('--use_cnn',default=False, action='store_true', help='use flownet get cls_token')
 
 args = parser.parse_args()
 
@@ -73,7 +74,7 @@ def main():
     # Model initialization
     # model = DeepVIO(args)
     # model = Encoder_CAM(args)
-    model = VisualOdometryTransformerActEmbed(cls_action=False)
+    model = VisualOdometryTransformerActEmbed(cls_action=False,is_pretrained_mmae=True,use_cnn=args.use_cnn)
     weights = torch.load(args.model)
     new_state_dict = {k.replace('module.', ''): v for k, v in weights.items()}
     model.load_state_dict(new_state_dict, strict=True)

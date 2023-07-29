@@ -11,6 +11,7 @@ import math
 from utils.utils import *
 from tqdm import tqdm 
 
+
 class data_partition():
     def __init__(self, opt, folder):
         super(data_partition, self).__init__()
@@ -77,6 +78,7 @@ class KITTI_tester():
         for i, (image_seq, imu_seq, gt_seq) in tqdm(enumerate(df), total=len(df), smoothing=0.9):  
             x_in = image_seq.unsqueeze(0).repeat(num_gpu,1,1,1,1).cuda()
             i_in = imu_seq.unsqueeze(0).repeat(num_gpu,1,1).cuda()
+
             # for cvpr2023 mmae
             decision = torch.zeros(x_in.shape[0], x_in.shape[1], 2).to(x_in.device)
             probs = torch.zeros(x_in.shape[0], x_in.shape[1], 2).to(x_in.device)
@@ -89,7 +91,7 @@ class KITTI_tester():
                     # pose, decision, probs = net(x_in) 
                     for i in range(two_imgs.shape[1]):
                         img = {'rgb':two_imgs[:,i]}
-                        pose = net(img)
+                        pose = net(img, use_cnn=self.args.use_cnn)
                         pose_seq.append(pose)
                 elif self.args.model_type == "svio_vo":
                     pose = net(x_in)

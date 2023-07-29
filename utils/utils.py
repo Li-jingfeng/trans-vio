@@ -525,7 +525,7 @@ class Encoder_VO(nn.Module):
 
     def forward(self, img):
         v = torch.cat((img[:, :-1], img[:, 1:]), dim=2)
-        batch_size = v.size(0)
+        batch_size = v.size(0)# [b,1,6,h,w]
         seq_len = v.size(1)
 
         # image CNN
@@ -578,3 +578,40 @@ class Pose_RNN_VO(nn.Module):
 
         hc = (hc[0].transpose(1, 0).contiguous(), hc[1].transpose(1, 0).contiguous())
         return pose, hc
+
+class flownet_cls_token(nn.Module):
+    def __init__(self, img_w, img_h, cls_token_len):
+        super(flownet_cls_token, self).__init__()
+        # CNN
+        self.conv1 = conv(True, 6, 64, kernel_size=7, stride=2, dropout=0.2)
+        self.conv2 = conv(True, 64, 128, kernel_size=5, stride=2, dropout=0.2)
+        self.conv3 = conv(True, 128, 256, kernel_size=5, stride=2, dropout=0.2)
+        self.conv3_1 = conv(True, 256, 256, kernel_size=3, stride=1, dropout=0.2)
+        self.conv4 = conv(True, 256, 512, kernel_size=3, stride=2, dropout=0.2)
+        self.conv4_1 = conv(True, 512, 512, kernel_size=3, stride=1, dropout=0.2)
+        self.conv5 = conv(True, 512, 512, kernel_size=3, stride=2, dropout=0.2)
+        self.conv5_1 = conv(True, 512, 512, kernel_size=3, stride=1, dropout=0.2)
+        self.conv6 = conv(True, 512, 1024, kernel_size=3, stride=2, dropout=0.5)
+        # Comput the shape based on diff image size
+        __tmp = Variable(torch.zeros(1, 6, img_w, img_h))
+        __tmp = self.encode_image(__tmp)
+
+        self.visual_head = nn.Linear(int(np.prod(__tmp.size())), cls_token_len)
+
+    def forward(self, img):
+        batch_size = img.size(0)
+
+        # image CNN
+        v = self.encode_image(img)
+        v = v.view(batch_size, -1)  # (batch, seq_len, fv)
+        v = self.visual_head(v)  # (batch, seq_len, 256)
+    
+        return v
+
+    def encode_image(self, x):
+        out_conv2 = self.conv2(self.conv1(x))
+        out_conv3 = self.conv3_1(self.conv3(out_conv2))
+        out_conv4 = self.conv4_1(self.conv4(out_conv3))
+        out_conv5 = self.conv5_1(self.conv5(out_conv4))
+        out_conv6 = self.conv6(out_conv5)
+        return out_conv6

@@ -264,7 +264,7 @@ def train(model, optimizer, train_loader, selection, temp, logger, ep, iter, p=0
             for j in range(two_imgs_forward.shape[1]):
                 img_forward = {'rgb':two_imgs_forward[:,j]} # 连续两帧
                 # img_backward = {'rgb':two_imgs_backward[:,j]} # 连续两帧 #额外添加
-                pose = model(img_forward)
+                pose = model(img_forward, use_cnn=args.use_cnn)
                 # pose_back = model(img_backward)#额外添加
                 poses.append(pose)
                 # pose_backward.append(pose_back)#额外添加
@@ -288,10 +288,10 @@ def train(model, optimizer, train_loader, selection, temp, logger, ep, iter, p=0
         
         # 增加一致性损失，cvpr的额外损失
         # geo_inverse_loss, abs_diff_geo_inverse_rot, abs_diff_geo_inverse_pos = compute_geo_invariance_inverse_loss(poses, pose_backward,device)
-        if model_type == "cvpr":
-            pose_loss = angle_loss + translation_loss
-        else:
-            pose_loss = 100 * angle_loss + translation_loss    
+        # if model_type == "cvpr":
+        #     pose_loss = angle_loss + translation_loss
+        # else:
+        pose_loss = 100 * angle_loss + translation_loss    
         pose_loss = pose_loss.float()    
         penalty = (decisions[:,:,0].float()).sum(-1).mean()
         # loss = pose_loss + args.Lambda * penalty 
@@ -378,7 +378,7 @@ def main():
     if args.model_type == 'deepvio':
         model = DeepVIO(args)
     elif args.model_type == 'cvpr':
-        model = VisualOdometryTransformerActEmbed(cls_action=False, is_pretrained_mmae=args.is_pretrained_mmae)
+        model = VisualOdometryTransformerActEmbed(cls_action=False, is_pretrained_mmae=args.is_pretrained_mmae, use_cnn=args.use_cnn)
     elif args.model_type == 'tscam':
         # 可视化所使用模型
         model = Encoder_CAM(args)
@@ -439,6 +439,7 @@ def main():
         pretrained_w = torch.load(args.pretrain_flownet, map_location='cpu')
         model_dict = model.Feature_net.state_dict()
         update_dict = {k: v for k, v in pretrained_w['state_dict'].items() if k in model_dict}
+        #当use_cnn=true时，visual_head不会被加载权重
         model_dict.update(update_dict)
         model.Feature_net.load_state_dict(model_dict)
 

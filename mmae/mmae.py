@@ -437,7 +437,7 @@ class MultiViT(MMAE):
     :param init_values: Optional initialization for Transformer block gamma values
     '''
 
-    def forward(self, x: Union[Dict[str, torch.Tensor], torch.Tensor], actions: torch.Tensor=None, EMBED_DIM: int=768, return_all_layers=False, return_attention=False, **kwargs):
+    def forward(self, x: Union[Dict[str, torch.Tensor], torch.Tensor], actions: torch.Tensor=None, EMBED_DIM: int=768, return_all_layers=False, return_attention=False, use_cnn=False, flow_tokens: torch.Tensor=None, **kwargs):
         '''
         Forward pass through input adapters, transformer encoder and output adapters.
 
@@ -477,7 +477,10 @@ class MultiViT(MMAE):
             elif 'depth' in x.keys():
                 global_tokens = self.embed(actions).reshape(x['depth'].shape[0], 1, EMBED_DIM) # dim_tokens
         else:
-            global_tokens = repeat(self.global_tokens, '() n d -> b n d', b=B)
+            if use_cnn:
+                global_tokens = flow_tokens
+            else:
+                global_tokens = repeat(self.global_tokens, '() n d -> b n d', b=B)
 
         input_tokens = torch.cat([input_tokens, global_tokens], dim=1)
 
