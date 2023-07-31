@@ -28,7 +28,7 @@ rank=0
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument('--data_dir', type=str, default='./data', help='path to the dataset')
 parser.add_argument('--gpu_ids', type=str, default='0', help='gpu ids: e.g. 0  0,1,2, 0,2. use -1 for CPU')
-parser.add_argument('--save_dir', type=str, default='./results', help='path to save the result')
+parser.add_argument('--save_dir', type=str, default='/disk1/ljf/VO-Transformer/results', help='path to save the result')
 
 parser.add_argument('--train_seq', type=list, default=['00', '01', '02', '04', '06', '08', '09'], help='sequences for training')
 parser.add_argument('--val_seq', type=list, default=['05', '07', '10', '01', '02', '04'], help='sequences for validation')
@@ -75,6 +75,7 @@ parser.add_argument('--T', type=int, default=2, help='time transformer T=2')
 parser.add_argument('--is_pretrained_mmae', type=bool, default=True, help='mmae backbone is_pretrained')
 parser.add_argument('--model_type',type=str, default='cvpr', help='model type:[cvpr,deepvio,tscam]')
 parser.add_argument('--use_cnn',default=False, action='store_true', help='use flownet get cls_token')
+parser.add_argument('--use_imu',default=False, action='store_true', help='use imu_encoder as cls_token')
 
 args = parser.parse_args()
 
@@ -264,7 +265,10 @@ def train(model, optimizer, train_loader, selection, temp, logger, ep, iter, p=0
             for j in range(two_imgs_forward.shape[1]):
                 img_forward = {'rgb':two_imgs_forward[:,j]} # 连续两帧
                 # img_backward = {'rgb':two_imgs_backward[:,j]} # 连续两帧 #额外添加
-                pose = model(img_forward, use_cnn=args.use_cnn)
+                if args.use_imu:
+                    pose = model(img_forward, imus.unsqueeze(1))
+                else:
+                    pose = model(img_forward)
                 # pose_back = model(img_backward)#额外添加
                 poses.append(pose)
                 # pose_backward.append(pose_back)#额外添加
@@ -334,7 +338,7 @@ def main():
 
     # setup(rank, world_size)
     # Create Dir
-    experiment_dir = Path('./results')
+    experiment_dir = Path(args.save_dir)
     experiment_dir.mkdir_p()
     file_dir = experiment_dir.joinpath('{}/'.format(args.experiment_name))
     file_dir.mkdir_p()
@@ -378,7 +382,7 @@ def main():
     if args.model_type == 'deepvio':
         model = DeepVIO(args)
     elif args.model_type == 'cvpr':
-        model = VisualOdometryTransformerActEmbed(cls_action=False, is_pretrained_mmae=args.is_pretrained_mmae, use_cnn=args.use_cnn)
+        model = VisualOdometryTransformerActEmbed(cls_action=False, is_pretrained_mmae=args.is_pretrained_mmae, use_cnn=args.use_cnn, use_imu=args.use_imu)
     elif args.model_type == 'tscam':
         # 可视化所使用模型
         model = Encoder_CAM(args)

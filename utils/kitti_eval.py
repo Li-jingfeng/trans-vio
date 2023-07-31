@@ -91,7 +91,7 @@ class KITTI_tester():
                     # pose, decision, probs = net(x_in) 
                     for i in range(two_imgs.shape[1]):
                         img = {'rgb':two_imgs[:,i]}
-                        pose = net(img, use_cnn=self.args.use_cnn)
+                        pose = net(img, imus=i_in.unsqueeze(1))
                         pose_seq.append(pose)
                 elif self.args.model_type == "svio_vo":
                     pose = net(x_in)

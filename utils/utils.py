@@ -615,3 +615,33 @@ class flownet_cls_token(nn.Module):
         out_conv5 = self.conv5_1(self.conv5(out_conv4))
         out_conv6 = self.conv6(out_conv5)
         return out_conv6
+class IMU_encoder_cls_token(nn.Module):
+    def __init__(self, imu_dropout, i_f_len):
+        super(IMU_encoder_cls_token, self).__init__()
+
+        self.encoder_conv = nn.Sequential(
+            nn.Conv1d(6, 64, kernel_size=3, padding=1),
+            nn.BatchNorm1d(64),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.Dropout(imu_dropout),
+            nn.Conv1d(64, 128, kernel_size=3, padding=1),
+            nn.BatchNorm1d(128),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.Dropout(imu_dropout),
+            nn.Conv1d(128, 256, kernel_size=3, padding=1),
+            nn.BatchNorm1d(256),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.Dropout(imu_dropout),
+            )
+        
+        self.proj = nn.Linear(256 * 1 * 11, i_f_len)
+        self.imu_len = i_f_len
+
+    def forward(self, x):
+        # x: (N, seq_len, 11, 6)
+        batch_size = x.shape[0]
+        seq_len = x.shape[1]
+        x = x.view(batch_size * seq_len, x.size(2), x.size(3))    # x: (N x seq_len, 11, 6)
+        x = self.encoder_conv(x.permute(0, 2, 1))                 # x: (N x seq_len, 64, 11)
+        out = self.proj(x.view(x.shape[0], -1))                   # out: (N x seq_len, 256)
+        return out.view(batch_size, seq_len, self.imu_len)

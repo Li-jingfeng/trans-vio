@@ -15,7 +15,7 @@ from vo_transformer import VisualOdometryTransformerActEmbed
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument('--data_dir', type=str, default='./data', help='path to the dataset')
 parser.add_argument('--gpu_ids', type=str, default='1', help='gpu ids: e.g. 0  0,1,2, 0,2. use -1 for CPU')
-parser.add_argument('--save_dir', type=str, default='./results', help='path to save the result')
+parser.add_argument('--save_dir', type=str, default='/disk1/ljf/VO-Transformer/results', help='path to save the result')
 parser.add_argument('--seq_len', type=int, default=11, help='sequence length for LSTM')
 
 parser.add_argument('--train_seq', type=list, default=['00', '01', '02', '04', '06', '08', '09'], help='sequences for training')
@@ -41,6 +41,7 @@ parser.add_argument('--T', type=int, default=2, help='time transformer T=2')
 parser.add_argument('--is_pretrained_mmae', type=bool, default=False, help='mmae backbone is_pretrained')
 parser.add_argument('--model_type',type=str, default='cvpr', help='model type:[cvpr,deepvio,tscam]')
 parser.add_argument('--use_cnn',default=False, action='store_true', help='use flownet get cls_token')
+parser.add_argument('--use_imu',default=False, action='store_true', help='use imu_encoder as cls_token')
 
 args = parser.parse_args()
 
@@ -74,7 +75,7 @@ def main():
     # Model initialization
     # model = DeepVIO(args)
     # model = Encoder_CAM(args)
-    model = VisualOdometryTransformerActEmbed(cls_action=False,is_pretrained_mmae=True,use_cnn=args.use_cnn)
+    model = VisualOdometryTransformerActEmbed(cls_action=False,is_pretrained_mmae=True,use_cnn=args.use_cnn, use_imu=args.use_imu)
     weights = torch.load(args.model)
     new_state_dict = {k.replace('module.', ''): v for k, v in weights.items()}
     model.load_state_dict(new_state_dict, strict=True)
