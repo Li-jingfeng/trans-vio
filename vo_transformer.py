@@ -35,7 +35,7 @@ class VisualOdometryTransformerActEmbed(nn.Module):
         cls_action = True,
         train_backbone=False,
         pretrain_backbone='mmae', # 'in21k', 'dino' 'mmae, 'None'
-        custom_model_path='/data/lijingfeng/pro/trans-vio/pretrained/',# multiMAE的pretrain weight
+        custom_model_path='/disk1/lijingfeng/pro/trans-vio/pretrained/',# multiMAE的pretrain weight
         obs_size_single=(320//4, 160),
         normalize_visual_inputs=False,
         hidden_size=512,
@@ -221,7 +221,7 @@ class VisualOdometryTransformerActEmbed(nn.Module):
 
             self.vit.forward_features = types.MethodType(forward_features, self.vit) # self.vit.forward_features = forward_features
 
-        if normalize_visual_inputs:
+        if normalize_visual_inputs: # false
             self.running_mean_and_var_rgb = RunningMeanAndVar(3)
             self.running_mean_and_var_depth = RunningMeanAndVar(1)
         else:
@@ -368,7 +368,14 @@ class VisualOdometryTransformerActEmbed(nn.Module):
             cls_token = cls_token.unsqueeze(1)
         elif not self.use_cnn and self.use_imu:
             cls_token = self.inertial_encoder(imus)
-        rgb, depth = self.preprocess(observation_pairs)
+        else:
+            cls_token = None
+        # rgb, depth = self.preprocess(observation_pairs)
+        rgb = observation_pairs['rgb']
+        rgb = rgb.permute(0,2,3,1)
+        rgb = torch.cat((rgb[:,:,:,:rgb.shape[-1]//2], rgb[:,:,:,rgb.shape[-1]//2:]),dim=1)
+        rgb = rgb.permute(0,3,1,2).contiguous()
+        depth = None
         
         if self.pretrain_backbone == 'mmae': # and  "rgb" in observation_pairs.keys() and "depth" in observation_pairs.keys():
             

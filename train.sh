@@ -45,3 +45,19 @@ CUDA_VISIBLE_DEVICES="0" python train.py --model_type svio_vo --batch_size 128 -
 
 CUDA_VISIBLE_DEVICES="0" python train.py --model_type cvpr --use_cnn --batch_size 128 --pretrain_flownet ./model_zoo/flownets_bn_EPE2.459.pth.tar --data_dir ./data --experiment_name add_flownet_cls_token --seq_len 2 --workers 16 --patch_size 16 --epochs_warmup 100 --epochs_joint 100 --epochs_fine 50 --is_pretrained_mmae True --img_w 341 --img_h 192
 CUDA_VISIBLE_DEVICES="0" python train.py --model_type cvpr --use_imu --batch_size 128 --data_dir ./data --experiment_name add_imu_cls_token --seq_len 2 --workers 16 --patch_size 16 --epochs_warmup 100 --epochs_joint 100 --epochs_fine 50 --is_pretrained_mmae True --img_w 341 --img_h 192
+
+# 2023/7/31 add flowformer encoder, transformer的使用方式
+CUDA_VISIBLE_DEVICES="0,1" python train.py --model_type flowformer_vo --batch_size 2 --data_dir ./data --experiment_name flowformer_vo --seq_len 2 --workers 16 --patch_size 16 --epochs_warmup 100 --epochs_joint 100 --epochs_fine 50 --is_pretrained_mmae True --img_w 960 --img_h 432 --stage kitti
+# 2023/8/3 change image resolution /2 add pretrained checkpoints
+CUDA_VISIBLE_DEVICES="2,0" python train.py --model_type flowformer_vo --pretrain ./model_zoo/flowformer_kitti.pth --batch_size 8 --data_dir ./data --experiment_name flowformer_vo_pretrained --seq_len 2 --workers 16 --patch_size 16 --epochs_warmup 100 --epochs_joint 100 --epochs_fine 50 --is_pretrained_mmae True --img_w 480 --img_h 216 --stage kitti
+CUDA_VISIBLE_DEVICES="1,3" python train.py --model_type flowformer_vo --pretrain ./model_zoo/flowformer_kitti.pth --batch_size 48 --data_dir ./data --experiment_name flowformer_vo_pretrained_before_AGT --seq_len 2 --workers 16 --patch_size 16 --epochs_warmup 100 --epochs_joint 100 --epochs_fine 50 --is_pretrained_mmae True --img_w 480 --img_h 216 --stage kitti
+# 修改cvpr图片尺寸
+CUDA_VISIBLE_DEVICES="1" python train.py --model_type cvpr --gpu_ids 0 --batch_size 16 --data_dir ./data --experiment_name cvpr_size --seq_len 2 --workers 16 --patch_size 16 --epochs_warmup 80 --epochs_joint 80 --epochs_fine 40 --is_pretrained_mmae True --img_w 512 --img_h 256
+# flowformer_vo regression_mode=2
+CUDA_VISIBLE_DEVICES="3" python train.py --model_type flowformer_vo --regression_mode 2 --gpu_ids 0 --batch_size 18 --data_dir ./data --experiment_name flowformer_vo_regress_mode_2 --seq_len 2 --workers 16 --patch_size 16 --epochs_warmup 80 --epochs_joint 80 --epochs_fine 40 --img_w 480 --img_h 216 --stage kitti --pretrain ./model_zoo/flowformer_kitti.pth
+# flowformer_vo regression_mode=3
+CUDA_VISIBLE_DEVICES="2" python train.py --model_type flowformer_vo --regression_mode 3 --gpu_ids 0 --batch_size 16 --data_dir ./data --experiment_name flowformer_vo_regress_mode_3 --seq_len 2 --workers 16 --patch_size 16 --epochs_warmup 80 --epochs_joint 80 --epochs_fine 40 --img_w 480 --img_h 216 --stage kitti --pretrain ./model_zoo/flowformer_kitti.pth
+# flowformer_vo regression_mode=2 only update regressor1 and 2
+CUDA_VISIBLE_DEVICES="2" python train.py --model_type flowformer_vo --regression_mode 2 --gpu_ids 0 --batch_size 50 --data_dir ./data --experiment_name flowformer_vo_regress_mode_2_update_regressor --seq_len 2 --workers 16 --patch_size 16 --epochs_warmup 20 --epochs_joint 80 --epochs_fine 40 --img_w 480 --img_h 216 --stage kitti --pretrain ./model_zoo/flowformer_kitti.pth
+# flowformer_vo regression_mode=3 only update regressor3
+CUDA_VISIBLE_DEVICES="3" python train.py --model_type flowformer_vo --regression_mode 3 --gpu_ids 0 --batch_size 50 --data_dir ./data --experiment_name flowformer_vo_regress_mode_3_update_regressor --seq_len 2 --workers 16 --patch_size 16 --epochs_warmup 20 --epochs_joint 100 --epochs_fine 40 --img_w 480 --img_h 216 --stage kitti --pretrain ./model_zoo/flowformer_kitti.pth

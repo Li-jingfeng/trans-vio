@@ -12,6 +12,7 @@ import torch.nn as nn
 from einops import rearrange, repeat
 import warnings
 from torch.autograd import Variable
+from correlation import Correlation
 
 
 TORCH_MAJOR = int(torch.__version__.split('.')[0])
@@ -502,7 +503,7 @@ def conv(batchNorm, in_planes, out_planes, kernel_size=3, stride=1, dropout=0):
             nn.LeakyReLU(0.1, inplace=True),
             nn.Dropout(dropout)  # , inplace=True)
         )
-
+# flownet simple
 class Encoder_VO(nn.Module):
     def __init__(self, opt):
         super(Encoder_VO, self).__init__()
@@ -543,7 +544,62 @@ class Encoder_VO(nn.Module):
         out_conv5 = self.conv5_1(self.conv5(out_conv4))
         out_conv6 = self.conv6(out_conv5)
         return out_conv6
+# flownet correlation version
+class Encoder_VO_C(nn.Module):
+    def __init__(self, args, batchNorm=True, div_flow = 20):
+        super(Encoder_VO_C, self).__init__()
+        self.batchNorm = batchNorm
+        self.div_flow = div_flow
 
+        self.conv1   = conv(self.batchNorm,   3,   64, kernel_size=7, stride=2)
+        self.conv2   = conv(self.batchNorm,  64,  128, kernel_size=5, stride=2)
+        self.conv3   = conv(self.batchNorm, 128,  256, kernel_size=5, stride=2)
+        self.conv_redir  = conv(self.batchNorm, 256,   32, kernel_size=1, stride=1)
+
+
+        self.corr = Correlation(pad_size=20, kernel_size=1, max_displacement=20, stride1=1, stride2=2, corr_multiply=1)
+
+        self.corr_activation = nn.LeakyReLU(0.1,inplace=True)
+        self.conv3_1 = conv(self.batchNorm, 473,  256)
+        self.conv4   = conv(self.batchNorm, 256,  512, stride=2)
+        self.conv4_1 = conv(self.batchNorm, 512,  512)
+        self.conv5   = conv(self.batchNorm, 512,  512, stride=2)
+        self.conv5_1 = conv(self.batchNorm, 512,  512)
+        self.conv6   = conv(self.batchNorm, 512, 1024, stride=2)
+        self.conv6_1 = conv(self.batchNorm,1024, 1024)
+
+    def forward(self, x):
+        x1 = x[:,0:3,:,:]
+        x2 = x[:,3::,:,:]
+
+        out_conv1a = self.conv1(x1)
+        out_conv2a = self.conv2(out_conv1a)
+        out_conv3a = self.conv3(out_conv2a)
+
+        # FlownetC bottom input stream
+        out_conv1b = self.conv1(x2)
+        
+        out_conv2b = self.conv2(out_conv1b)
+        out_conv3b = self.conv3(out_conv2b)
+
+        # Merge streams
+        out_corr = self.corr(out_conv3a, out_conv3b) # False
+        out_corr = self.corr_activation(out_corr)
+
+        # Redirect top input stream and concatenate
+        out_conv_redir = self.conv_redir(out_conv3a)
+
+        in_conv3_1 = torch.cat((out_conv_redir, out_corr), 1)
+
+        # Merged conv layers
+        out_conv3_1 = self.conv3_1(in_conv3_1)
+
+        out_conv4 = self.conv4_1(self.conv4(out_conv3_1))
+
+        out_conv5 = self.conv5_1(self.conv5(out_conv4))
+        out_conv6 = self.conv6_1(self.conv6(out_conv5))
+
+        return out_conv6
 # The pose estimation network
 class Pose_RNN_VO(nn.Module):
     def __init__(self, opt):
@@ -615,6 +671,7 @@ class flownet_cls_token(nn.Module):
         out_conv5 = self.conv5_1(self.conv5(out_conv4))
         out_conv6 = self.conv6(out_conv5)
         return out_conv6
+
 class IMU_encoder_cls_token(nn.Module):
     def __init__(self, imu_dropout, i_f_len):
         super(IMU_encoder_cls_token, self).__init__()

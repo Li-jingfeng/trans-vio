@@ -11,6 +11,7 @@ from utils.kitti_eval import KITTI_tester
 import numpy as np
 import math
 from vo_transformer import VisualOdometryTransformerActEmbed
+from flowformer_model import FlowFormer_VO
 
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument('--data_dir', type=str, default='./data', help='path to the dataset')
@@ -42,6 +43,7 @@ parser.add_argument('--is_pretrained_mmae', type=bool, default=False, help='mmae
 parser.add_argument('--model_type',type=str, default='cvpr', help='model type:[cvpr,deepvio,tscam]')
 parser.add_argument('--use_cnn',default=False, action='store_true', help='use flownet get cls_token')
 parser.add_argument('--use_imu',default=False, action='store_true', help='use imu_encoder as cls_token')
+parser.add_argument('--stage', type=str, default="kitti", help="determines which dataset to use for training") 
 
 args = parser.parse_args()
 
@@ -75,7 +77,12 @@ def main():
     # Model initialization
     # model = DeepVIO(args)
     # model = Encoder_CAM(args)
-    model = VisualOdometryTransformerActEmbed(cls_action=False,is_pretrained_mmae=True,use_cnn=args.use_cnn, use_imu=args.use_imu)
+    if args.model_type == 'cvpr':
+        model = VisualOdometryTransformerActEmbed(cls_action=False,is_pretrained_mmae=True,use_cnn=args.use_cnn, use_imu=args.use_imu)
+    elif args.model_type == 'flowformer_vo':
+        from flowformer.config.kitti import get_cfg
+        cfg = get_cfg()
+        model = FlowFormer_VO(cfg['latentcostformer'])
     weights = torch.load(args.model)
     new_state_dict = {k.replace('module.', ''): v for k, v in weights.items()}
     model.load_state_dict(new_state_dict, strict=True)

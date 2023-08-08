@@ -16,6 +16,9 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.distributed as dist
 from torch.utils.data.distributed import DistributedSampler
 import torch.multiprocessing as mp
+# eccv2022 flowformer optical flow estimation
+from flowformer_model import FlowFormer_VO
+from gmflow.gmflow import GMFlow_VO
 EPSILON = 1e-8
 
 # from accelerate import Accelerator
@@ -27,7 +30,7 @@ rank=0
 
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument('--data_dir', type=str, default='./data', help='path to the dataset')
-parser.add_argument('--gpu_ids', type=str, default='0', help='gpu ids: e.g. 0  0,1,2, 0,2. use -1 for CPU')
+parser.add_argument('--gpu_ids', type=str, default='0,1', help='gpu ids: e.g. 0  0,1,2, 0,2. use -1 for CPU')
 parser.add_argument('--save_dir', type=str, default='/disk1/ljf/VO-Transformer/results', help='path to save the result')
 
 parser.add_argument('--train_seq', type=list, default=['00', '01', '02', '04', '06', '08', '09'], help='sequences for training')
@@ -76,6 +79,21 @@ parser.add_argument('--is_pretrained_mmae', type=bool, default=True, help='mmae 
 parser.add_argument('--model_type',type=str, default='cvpr', help='model type:[cvpr,deepvio,tscam]')
 parser.add_argument('--use_cnn',default=False, action='store_true', help='use flownet get cls_token')
 parser.add_argument('--use_imu',default=False, action='store_true', help='use imu_encoder as cls_token')
+# eccv2022 flowformer
+parser.add_argument('--stage', type=str, default="kitti", help="determines which dataset to use for training") 
+parser.add_argument('--regression_mode', type=int, default=2, help="determines which regress_mode to use for flowformer_vo") 
+# 2022 GMFlow
+parser.add_argument('--gmflow_feature_channels', default=128, type=int)
+parser.add_argument('--gmflow_num_scales', default=1, type=int,
+                    help='basic gmflow model uses a single 1/8 feature, the refinement uses 1/4 feature')
+parser.add_argument('--gmflow_upsample_factor', default=8, type=int)
+parser.add_argument('--gmflow_num_head', default=1, type=int)
+parser.add_argument('--gmflow_attention_type', default='swin', type=str)
+parser.add_argument('--gmflow_ffn_dim_expansion', default=4, type=int)
+parser.add_argument('--gmflow_num_transformer_layers', default=6, type=int)
+parser.add_argument('--prop_radius_list', default=[-1], type=int, nargs='+',help='self-attention radius for flow propagation, -1 indicates global attention')
+parser.add_argument('--attn_splits_list', default=[2], type=int, nargs='+',help='number of splits in attention')
+parser.add_argument('--corr_radius_list', default=[-1], type=int, nargs='+',help='correlation radius for matching, -1 indicates global matching')
 
 args = parser.parse_args()
 
@@ -107,6 +125,19 @@ if args.experiment_name != 'debug':
         "is_pretrained_mmae": args.is_pretrained_mmae,
         "model_type": args.model_type,
         "use_cnn": args.use_cnn,
+        "stage": args.stage,
+        "regression_mode": args.regression_mode,
+        "gmflow_feature_channels": args.gmflow_feature_channels,
+        "gmflow_num_scales": args.gmflow_num_scales,
+        "gmflow_upsample_factor": args.gmflow_upsample_factor,
+        "gmflow_num_head": args.gmflow_num_head,
+        "gmflow_attention_type": args.gmflow_attention_type,
+        "attention_type": args.gmflow_attention_type,
+        "ffn_dim_expansion": args.gmflow_ffn_dim_expansion,
+        "num_transformer_layers": args.gmflow_num_transformer_layers,
+        "prop_radius_list": args.prop_radius_list,
+        "attn_splits_list": args.attn_splits_list,
+        "corr_radius_list": args.corr_radius_list,
         }
     )
 
@@ -257,7 +288,7 @@ def train(model, optimizer, train_loader, selection, temp, logger, ep, iter, p=0
         device = imgs.device
         decisions = torch.zeros(batch_size, seq_len, 2).to(device)
         probs = torch.zeros(batch_size, seq_len, 2).to(device)
-        if model_type != 'deepvio' and model_type != "svio_vo":
+        if model_type != 'deepvio' and model_type != "svio_vo" and model_type != "flowformer_vo" and model_type != "gmflow_vo":
             poses, pose_backward = [], []
             two_imgs_forward = torch.cat((imgs[:, :-1], imgs[:, 1:]), dim=2)
             two_imgs_backward = torch.cat((imgs[:, 1:], imgs[:, :-1]), dim=2)#额外添加
@@ -277,6 +308,12 @@ def train(model, optimizer, train_loader, selection, temp, logger, ep, iter, p=0
                 poses = poses.permute(1,0,2)
         elif model_type == "deepvio" or model_type == "svio_vo":
             poses = model(imgs)
+        elif model_type == "flowformer_vo":
+            img0 = imgs[:, 0]
+            img1 = imgs[:, 1]
+            poses = model(img0,img1)
+        elif model_type == "gmflow_vo":
+            poses = model(imgs[:,0],imgs[:,1],attn_splits_list=args.attn_splits_list,corr_radius_list=args.corr_radius_list,prop_radius_list=args.prop_radius_list)
 
         # wandb.log delta_x,delta_y,delta_yaw
         if rank == 0 and args.experiment_name != "debug":
@@ -338,7 +375,8 @@ def main():
 
     # setup(rank, world_size)
     # Create Dir
-    experiment_dir = Path(args.save_dir)
+    # experiment_dir = Path(args.save_dir)
+    experiment_dir = Path('./results')
     experiment_dir.mkdir_p()
     file_dir = experiment_dir.joinpath('{}/'.format(args.experiment_name))
     file_dir.mkdir_p()
@@ -379,6 +417,7 @@ def main():
     # torch.cuda.set_device(local_rank)
     # device = torch.device('cuda', local_rank)
     # Model initialization
+
     if args.model_type == 'deepvio':
         model = DeepVIO(args)
     elif args.model_type == 'cvpr':
@@ -388,6 +427,20 @@ def main():
         model = Encoder_CAM(args)
     elif args.model_type == 'svio_vo':
         model = SVIO_VO(args)
+    elif args.model_type == 'flowformer_vo':
+        if args.stage == 'kitti':
+            from flowformer.config.kitti import get_cfg
+            cfg = get_cfg()
+        model = FlowFormer_VO(cfg['latentcostformer'],regression_mode=args.regression_mode)
+    elif args.model_type == 'gmflow_vo':
+        model = GMFlow_VO(feature_channels=args.gmflow_feature_channels,
+                   num_scales=args.gmflow_num_scales,
+                   upsample_factor=args.gmflow_upsample_factor,
+                   num_head=args.gmflow_num_head,
+                   attention_type=args.gmflow_attention_type,
+                   ffn_dim_expansion=args.gmflow_ffn_dim_expansion,
+                   num_transformer_layers=args.gmflow_num_transformer_layers,)
+                   
     # sampler = DistributedSampler(train_dataset)
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
@@ -411,32 +464,38 @@ def main():
     # Initialize the tester
     tester = KITTI_tester(args)
 
-
-    # 2023/6/27先不加入imu，也不使用action，只是使用multivit预训练模型，是否会对我性能产生正面的影响
-
     # Continual training or not
     if args.pretrain is not None:
         state_dict = torch.load(args.pretrain)
-        for key in list(state_dict):
-            if key == 'head.4.weight' or key == 'head.4.bias':
-                del state_dict[key]
-        model.load_state_dict(state_dict,strict=False)
+        # for key in list(state_dict):
+        #     if key == 'head.4.weight' or key == 'head.4.bias':
+        #         del state_dict[key]
+        state_dict = {k.replace("module.", "") if "module." in k else k: v for k, v in state_dict.items()}
+
+        if args.model_type == "flowformer_vo":
+            model.load_state_dict(state_dict,strict=False)
+        elif args.model_type == "gmflow_vo":
+            model.load_state_dict(state_dict["model"],strict=True)
+        else:
+            model.load_state_dict(state_dict,strict=True)
         print('load model %s'%args.pretrain)
         logger.info('load model %s'%args.pretrain)
     else:
         print('Training from scratch')
         logger.info('Training from scratch')
     # 其他部分参数不更新，只更新head部分
-    # for param in model.parameters():
-    #     param.requires_grad = False
-    # for param in model.vit.encoder[9].parameters():
-    #     param.requires_grad = True
-    # for param in model.vit.encoder[10].parameters():
-    #     param.requires_grad = True
-    # for param in model.vit.encoder[11].parameters():
-    #     param.requires_grad = True
-    # for param in model.head.parameters():
-    #     param.requires_grad = True
+    if args.regression_mode == 3:
+        for param in model.parameters():
+            param.requires_grad = False
+        for param in model.regressor_3.parameters():
+            param.requires_grad = True
+    elif args.regression_mode == 2:
+        for param in model.parameters():
+            param.requires_grad = False
+        for param in model.regressor_1.parameters():
+            param.requires_grad = True
+        for param in model.regressor_2.parameters():
+            param.requires_grad = True
 
     # Use the pre-trained flownet or not
     if args.pretrain_flownet and args.pretrain is None:
@@ -465,7 +524,7 @@ def main():
     # model, optimizer, train_loader = accelerator.prepare(model, optimizer, train_loader)
 
     pretrain = args.pretrain 
-    init_epoch = int(pretrain[-7:-4])+1 if args.pretrain is not None else 0    
+    init_epoch = int(pretrain[-7:-4])+1 if args.pretrain is not None and args.model_type=="deepvio" else 0    
     iter = init_epoch*(len(train_loader) // args.batch_size + 1) if args.pretrain is not None else 0
     
     best = 10000

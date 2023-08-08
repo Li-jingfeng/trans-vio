@@ -97,6 +97,10 @@ class KITTI_tester():
                     pose = net(x_in)
                     pose = pose.squeeze(1)
                     pose_seq.append(pose)
+                elif self.args.model_type == 'flowformer_vo':
+                    pose = net(x_in[:,0],x_in[:,1])
+                    pose = pose.squeeze(1)
+                    pose_seq.append(pose)
             pose_seq = torch.stack(pose_seq,dim=1).to(x_in.device)
             pose_list.append(pose_seq[0,:,:].detach().cpu().numpy())
             # pose_list.append(pose[0,:,:].detach().cpu().numpy())
