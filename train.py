@@ -83,6 +83,8 @@ parser.add_argument('--use_imu',default=False, action='store_true', help='use im
 # eccv2022 flowformer
 parser.add_argument('--stage', type=str, default="kitti", help="determines which dataset to use for training") 
 parser.add_argument('--regression_mode', type=int, default=2, help="determines which regress_mode to use for flowformer_vo") 
+parser.add_argument('--add_part_weight', type=bool, default=False, help="是否加载flowformer部分权重文件") 
+
 # 2022 GMFlow
 parser.add_argument('--gmflow_feature_channels', default=128, type=int)
 parser.add_argument('--gmflow_num_scales', default=1, type=int,
@@ -128,6 +130,7 @@ if args.experiment_name != 'debug':
         "use_cnn": args.use_cnn,
         "stage": args.stage,
         "regression_mode": args.regression_mode,
+        "add_part_weight": args.add_part_weight,
         "gmflow_feature_channels": args.gmflow_feature_channels,
         "gmflow_num_scales": args.gmflow_num_scales,
         "gmflow_upsample_factor": args.gmflow_upsample_factor,
@@ -496,8 +499,13 @@ def main():
         if args.model_type == "flowformer_vo":
             model.load_state_dict(state_dict,strict=False)
         elif args.model_type == "flowformer_vio": # 与flowformer_vo保持一致
+            if args.add_part_weight:# flowformer_vio or 加载部分kitti权重
+                for k in list(state_dict):
+                    if "cost_perceiver_encoder" in k:
+                        del state_dict[k]
             model.load_state_dict(state_dict,strict=False)
         elif args.model_type == "gmflow_vo":
+            state_dict 
             model.load_state_dict(state_dict["model"],strict=True)
         else:
             model.load_state_dict(state_dict,strict=True)
@@ -521,6 +529,13 @@ def main():
                 param.requires_grad = True
             for param in model.visual_regressor_vio_2.parameters():
                 param.requires_grad = True
+        if args.add_part_weight:
+            # 可以更新corss attention部分，CostPerceiverEncoder其他部分不参与forward也不参与更新
+            for param in model.memory_encoder.cost_perceiver_encoder.input_layer.parameters():
+                param.requires_grad = True
+            for param in model.memory_encoder.cost_perceiver_encoder.patch_embed.parameters():
+                param.requires_grad = True
+            model.memory_encoder.cost_perceiver_encoder.latent_tokens.requires_grad = True
     elif args.model_type == 'flowformer_vo':
         if args.regression_mode == 3:
             for param in model.parameters():
@@ -534,6 +549,13 @@ def main():
                 param.requires_grad = True
             for param in model.regressor_2.parameters():
                 param.requires_grad = True
+        if args.add_part_weight:
+            # 可以更新corss attention部分，CostPerceiverEncoder其他部分不参与forward也不参与更新
+            for param in model.memory_encoder.cost_perceiver_encoder.input_layer.parameters():
+                param.requires_grad = True
+            for param in model.memory_encoder.cost_perceiver_encoder.patch_embed.parameters():
+                param.requires_grad = True
+            model.memory_encoder.cost_perceiver_encoder.latent_tokens.requires_grad = True
 
     # Use the pre-trained flownet or not
     if args.pretrain_flownet and args.pretrain is None:

@@ -99,7 +99,7 @@
             // "env": {"CUDA_VISIBLE_DEVICES":"1"},
             "args": [
                 "--gpu_ids","3",
-                "--batch_size","50",
+                "--batch_size","2",
                 "--data_dir","./data",
                 "--experiment_name","debug",
                 "--seq_len","2",
@@ -114,6 +114,7 @@
                 // "--use_imu",
                 "--stage","kitti",
                 "--regression_mode","2",
+                "--add_part_weight","True",
             ]
         },
         {

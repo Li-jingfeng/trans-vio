@@ -62,7 +62,7 @@ CUDA_VISIBLE_DEVICES="3" python train.py --model_type flowformer_vo --regression
 # flowformer_vo regression_mode=2 only update regressor1 and 2
 # 这个版本达到过拟合的效果
 CUDA_VISIBLE_DEVICES="2" python train.py --model_type flowformer_vo --regression_mode 2 --gpu_ids 0 --batch_size 50 --data_dir ./data --experiment_name flowformer_vo_regress_mode_2_update_regressor --seq_len 2 --workers 16 --patch_size 16 --epochs_warmup 20 --epochs_joint 80 --epochs_fine 40 --img_w 480 --img_h 216 --stage kitti --pretrain ./model_zoo/flowformer_kitti.pth
-# 针对上一过拟合的版本，不修改参数，在最后加入imu feature concat做预测，看能不能缓减过拟合效果，同时达到更好的结果
+# 针对上一过拟合的版本，不修改参数，在最后加入imu feature concat做预测，看能不能缓减过拟合效果，同时达到更好的结果---->结果是可以缓减过拟合，结果更好
 python train.py --model_type flowformer_vio --regression_mode 2 --gpu_ids 3 --batch_size 50 --data_dir ./data --experiment_name flowformer_vio_regress_mode_2_freeze_backbone --seq_len 2 --workers 16 --patch_size 16 --epochs_warmup 20 --epochs_joint 80 --epochs_fine 40 --img_w 480 --img_h 216 --stage kitti --pretrain ./model_zoo/flowformer_kitti.pth
 # 根据上述实验结果，修改cvpr参数，重新实验
 python train.py --model_type cvpr --gpu_ids 0 --batch_size 128 --data_dir ./data --experiment_name cvpr_fix_lr --seq_len 2 --workers 16 --patch_size 16 --epochs_warmup 100 --epochs_joint 100 --epochs_fine 50 --is_pretrained_mmae True --img_w 341 --img_h 192
@@ -70,4 +70,5 @@ python train.py --model_type cvpr --gpu_ids 0 --batch_size 128 --data_dir ./data
 python train.py --model_type flowformer_vo --regression_mode 2 --gpu_ids 3 --batch_size 16 --data_dir ./data --experiment_name flowformer_vo_regress_mode_2_update_all --seq_len 2 --workers 16 --patch_size 16 --epochs_warmup 7 --epochs_joint 26 --epochs_fine 14 --img_w 480 --img_h 216 --stage kitti --pretrain ./model_zoo/flowformer_kitti.pth
 # 感觉效果不是很好，重新做一次实验，将batch_size改为32
 CUDA_VISIBLE_DEVICES="1,3" python train.py --model_type flowformer_vo --regression_mode 2 --batch_size 32 --data_dir ./data --experiment_name flowformer_vo_regress_mode_2_update_all_b32 --seq_len 2 --workers 16 --patch_size 16 --epochs_warmup 20 --epochs_joint 80 --epochs_fine 40 --img_w 480 --img_h 216 --stage kitti --pretrain ./model_zoo/flowformer_kitti.pth
-
+# 2023/8/9  除了regressor之外，同时将cross attention纳入更新，而且加载权重时不加载这部分权重  多了一个add_part_weight参数
+python train.py --model_type flowformer_vio --regression_mode 2 --add_part_weight True --gpu_ids 0 --batch_size 48 --data_dir ./data --experiment_name flowformer_vio_regress_mode_2_update_cross_attn --seq_len 2 --workers 16 --patch_size 16 --epochs_warmup 20 --epochs_joint 80 --epochs_fine 40 --img_w 480 --img_h 216 --stage kitti --pretrain ./model_zoo/flowformer_kitti.pth
