@@ -5,7 +5,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "train",
+            "name": "train-cvpr",
             "type": "python",
             "request": "launch",
             "program": "${workspaceFolder}/train.py",
@@ -23,10 +23,10 @@
                 "--is_pretrained_mmae","True",
                 "--model_type","cvpr",
                 // "--pretrain","./model_zoo/remove_module_fix_model.pth",
-                // "--img_w","341",
-                // "--img_h","192",
-                "--img_w","512",
-                "--img_h","256",
+                "--img_w","341",
+                "--img_h","192",
+                // "--img_w","512",
+                // "--img_h","256",
                 // "--pretrain_flownet","./model_zoo/flownets_bn_EPE2.459.pth.tar",
                 // "--use_cnn",
                 // "--use_imu",
@@ -71,7 +71,7 @@
             "env": {"CUDA_VISIBLE_DEVICES":"1"},
             "args": [
                 "--gpu_ids","0",
-                "--batch_size","2",
+                "--batch_size","16",
                 "--data_dir","./data",
                 "--experiment_name","debug",
                 "--seq_len","2",
@@ -86,11 +86,60 @@
                 // "--use_cnn",
                 // "--use_imu",
                 "--stage","kitti",
-                "--regression_mode","3"
+                "--regression_mode","2"
             ]
         },
         {
-            "name": "train_vo",
+            "name": "train_flowformer_vio",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/train.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            // "env": {"CUDA_VISIBLE_DEVICES":"1"},
+            "args": [
+                "--gpu_ids","3",
+                "--batch_size","50",
+                "--data_dir","./data",
+                "--experiment_name","debug",
+                "--seq_len","2",
+                "--workers", "8",
+                "--patch_size","16",
+                "--model_type","flowformer_vio",
+                "--pretrain","./model_zoo/flowformer_kitti.pth",
+                "--img_w","480",//960
+                "--img_h","216",//432
+                // "--pretrain_flownet","./model_zoo/flownets_bn_EPE2.459.pth.tar",
+                // "--use_cnn",
+                // "--use_imu",
+                "--stage","kitti",
+                "--regression_mode","2",
+            ]
+        },
+        {
+            "name": "train_svio_vo",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/train.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--gpu_ids","0",
+                "--batch_size","16",
+                "--data_dir","./data",
+                "--experiment_name","debug",
+                "--seq_len","2",
+                "--workers", "8",
+                "--patch_size","16",
+                "--model_type","svio_vo",
+                // "--pretrain","./model_zoo/remove_module_fix_model.pth",
+                "--pretrain_flownet","./model_zoo/flownets_bn_EPE2.459.pth.tar",
+                "--img_w","341",
+                "--img_h","192",
+            ]
+        },
+        {
+            "name": "train_svio_vo_C",
             "type": "python",
             "request": "launch",
             "program": "${workspaceFolder}/train.py",

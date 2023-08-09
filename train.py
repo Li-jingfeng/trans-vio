@@ -5,7 +5,7 @@ import logging
 from path import Path
 from utils import custom_transform
 from dataset.KITTI_dataset import KITTI
-from model import DeepVIO, Encoder_CAM, SVIO_VO
+from model import DeepVIO, Encoder_CAM, SVIO_VO, SVIO_VO_C
 from collections import defaultdict
 from utils.kitti_eval import KITTI_tester
 import numpy as np
@@ -18,6 +18,7 @@ from torch.utils.data.distributed import DistributedSampler
 import torch.multiprocessing as mp
 # eccv2022 flowformer optical flow estimation
 from flowformer_model import FlowFormer_VO
+from flowformer_vio import FlowFormer_VIO
 from gmflow.gmflow import GMFlow_VO
 EPSILON = 1e-8
 
@@ -146,22 +147,30 @@ torch.manual_seed(args.seed)
 np.random.seed(args.seed)
 # 修改超参数，按照cvpr2023的设置
 def update_status(ep, args, model):
-    if ep < args.epochs_warmup:  # Warmup stage
-        lr = args.lr_warmup
-        selection = 'random'
+    if args.model_type == 'cvpr':
+        if ep < 10:
+            lr = (2e-4/10) * (ep+1)
+        else:
+            lr = 2e-4
+        selection = 'gumbel-softmax'
         temp = args.temp_init
-        # for param in model.module.Policy_net.parameters(): # Disable the policy network
-        #     param.requires_grad = False
-    elif ep >= args.epochs_warmup and ep < args.epochs_warmup + args.epochs_joint: # Joint training stage
-        lr = args.lr_joint
-        selection = 'gumbel-softmax'
-        temp = args.temp_init * math.exp(-args.eta * (ep-args.epochs_warmup))
-        # for param in model.module.Policy_net.parameters(): # Enable the policy network
-        #     param.requires_grad = True
-    elif ep >= args.epochs_warmup + args.epochs_joint: # Finetuning stage
-        lr = args.lr_fine
-        selection = 'gumbel-softmax'
-        temp = args.temp_init * math.exp(-args.eta * (ep-args.epochs_warmup))
+    else:
+        if ep < args.epochs_warmup:  # Warmup stage
+            lr = args.lr_warmup
+            selection = 'random'
+            temp = args.temp_init
+            # for param in model.module.Policy_net.parameters(): # Disable the policy network
+            #     param.requires_grad = False
+        elif ep >= args.epochs_warmup and ep < args.epochs_warmup + args.epochs_joint: # Joint training stage
+            lr = args.lr_joint
+            selection = 'gumbel-softmax'
+            temp = args.temp_init * math.exp(-args.eta * (ep-args.epochs_warmup))
+            # for param in model.module.Policy_net.parameters(): # Enable the policy network
+            #     param.requires_grad = True
+        elif ep >= args.epochs_warmup + args.epochs_joint: # Finetuning stage
+            lr = args.lr_fine
+            selection = 'gumbel-softmax'
+            temp = args.temp_init * math.exp(-args.eta * (ep-args.epochs_warmup))
     return lr, selection, temp
 
 def eulerAnglesToRotationMatrix_torch(theta, device):
@@ -288,7 +297,7 @@ def train(model, optimizer, train_loader, selection, temp, logger, ep, iter, p=0
         device = imgs.device
         decisions = torch.zeros(batch_size, seq_len, 2).to(device)
         probs = torch.zeros(batch_size, seq_len, 2).to(device)
-        if model_type != 'deepvio' and model_type != "svio_vo" and model_type != "flowformer_vo" and model_type != "gmflow_vo":
+        if model_type != 'deepvio' and model_type != "svio_vo" and model_type != "flowformer_vo" and model_type != "gmflow_vo" and model_type != "flowformer_vio":
             poses, pose_backward = [], []
             two_imgs_forward = torch.cat((imgs[:, :-1], imgs[:, 1:]), dim=2)
             two_imgs_backward = torch.cat((imgs[:, 1:], imgs[:, :-1]), dim=2)#额外添加
@@ -312,6 +321,11 @@ def train(model, optimizer, train_loader, selection, temp, logger, ep, iter, p=0
             img0 = imgs[:, 0]
             img1 = imgs[:, 1]
             poses = model(img0,img1)
+        elif model_type == "flowformer_vio":
+            img0 = imgs[:, 0]
+            img1 = imgs[:, 1]
+            imus = imus.unsqueeze(1)# 对于只估计两帧直接的变换来说，给imus添加seq维度
+            poses = model(img0,img1,imus)
         elif model_type == "gmflow_vo":
             poses = model(imgs[:,0],imgs[:,1],attn_splits_list=args.attn_splits_list,corr_radius_list=args.corr_radius_list,prop_radius_list=args.prop_radius_list)
 
@@ -427,11 +441,18 @@ def main():
         model = Encoder_CAM(args)
     elif args.model_type == 'svio_vo':
         model = SVIO_VO(args)
+    elif args.model_type == 'flownet_C':
+        model = SVIO_VO_C(args)
     elif args.model_type == 'flowformer_vo':
         if args.stage == 'kitti':
             from flowformer.config.kitti import get_cfg
             cfg = get_cfg()
         model = FlowFormer_VO(cfg['latentcostformer'],regression_mode=args.regression_mode)
+    elif args.model_type == 'flowformer_vio':
+        if args.stage == 'kitti':
+            from flowformer.config.kitti import get_cfg
+            cfg = get_cfg()
+        model = FlowFormer_VIO(cfg['latentcostformer'],regression_mode=args.regression_mode)
     elif args.model_type == 'gmflow_vo':
         model = GMFlow_VO(feature_channels=args.gmflow_feature_channels,
                    num_scales=args.gmflow_num_scales,
@@ -474,6 +495,8 @@ def main():
 
         if args.model_type == "flowformer_vo":
             model.load_state_dict(state_dict,strict=False)
+        elif args.model_type == "flowformer_vio": # 与flowformer_vo保持一致
+            model.load_state_dict(state_dict,strict=False)
         elif args.model_type == "gmflow_vo":
             model.load_state_dict(state_dict["model"],strict=True)
         else:
@@ -484,18 +507,33 @@ def main():
         print('Training from scratch')
         logger.info('Training from scratch')
     # 其他部分参数不更新，只更新head部分
-    if args.regression_mode == 3:
+    if args.model_type == 'flowformer_vio':
         for param in model.parameters():
             param.requires_grad = False
-        for param in model.regressor_3.parameters():
+        for param in model.inertial_encoder_conv.parameters():
             param.requires_grad = True
-    elif args.regression_mode == 2:
-        for param in model.parameters():
-            param.requires_grad = False
-        for param in model.regressor_1.parameters():
+        for param in model.inertial_proj.parameters():
             param.requires_grad = True
-        for param in model.regressor_2.parameters():
+        for param in model.pose_regressor.parameters():
             param.requires_grad = True
+        if args.regression_mode == 2:
+            for param in model.visual_regressor_vio_1.parameters():
+                param.requires_grad = True
+            for param in model.visual_regressor_vio_2.parameters():
+                param.requires_grad = True
+    elif args.model_type == 'flowformer_vo':
+        if args.regression_mode == 3:
+            for param in model.parameters():
+                param.requires_grad = False
+            for param in model.regressor_3.parameters():
+                param.requires_grad = True
+        elif args.regression_mode == 2:
+            for param in model.parameters():
+                param.requires_grad = False
+            for param in model.regressor_1.parameters():
+                param.requires_grad = True
+            for param in model.regressor_2.parameters():
+                param.requires_grad = True
 
     # Use the pre-trained flownet or not
     if args.pretrain_flownet and args.pretrain is None:
@@ -551,7 +589,8 @@ def main():
         logger.info(message)
 
         # if ep > args.epochs_warmup+args.epochs_joint or ep%10==0:
-        if ep%10==0:
+        # 这个也需要更改，这里是update all batch_size=16,所以所有的epoch除3
+        if ep%10==0 and ep!=0:
             # Evaluate the model
             print('Evaluating the model')
             logger.info('Evaluating the model')

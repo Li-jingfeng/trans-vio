@@ -12,7 +12,7 @@ import torch.nn as nn
 from einops import rearrange, repeat
 import warnings
 from torch.autograd import Variable
-from correlation import Correlation
+from correlation_package.correlation import Correlation
 
 
 TORCH_MAJOR = int(torch.__version__.split('.')[0])

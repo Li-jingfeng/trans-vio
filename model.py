@@ -11,7 +11,7 @@ import torch.nn.functional as F
 from utils.utils import Block, Attention, trunc_normal_
 from einops.layers.torch import Rearrange
 from einops import rearrange, repeat
-from utils.utils import Encoder_VO, Pose_RNN_VO
+from utils.utils import Encoder_VO, Pose_RNN_VO, Encoder_VO_C
 
 # cvpr2023 vo-transformer模型
 
@@ -677,7 +677,7 @@ class SVIO_VO_C(nn.Module):
     def __init__(self, opt):
         super(SVIO_VO_C, self).__init__()
 
-        self.Feature_net = Encoder_VO(opt)
+        self.Feature_net = Encoder_VO_C(opt)
         self.Pose_net = Pose_RNN_VO(opt)
         self.opt = opt
         

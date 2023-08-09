@@ -370,12 +370,12 @@ class VisualOdometryTransformerActEmbed(nn.Module):
             cls_token = self.inertial_encoder(imus)
         else:
             cls_token = None
-        # rgb, depth = self.preprocess(observation_pairs)
-        rgb = observation_pairs['rgb']
-        rgb = rgb.permute(0,2,3,1)
-        rgb = torch.cat((rgb[:,:,:,:rgb.shape[-1]//2], rgb[:,:,:,rgb.shape[-1]//2:]),dim=1)
-        rgb = rgb.permute(0,3,1,2).contiguous()
-        depth = None
+        rgb, depth = self.preprocess(observation_pairs)
+        # rgb = observation_pairs['rgb']
+        # rgb = rgb.permute(0,2,3,1)
+        # rgb = torch.cat((rgb[:,:,:,:rgb.shape[-1]//2], rgb[:,:,:,rgb.shape[-1]//2:]),dim=1)
+        # rgb = rgb.permute(0,3,1,2).contiguous()
+        # depth = None
         
         if self.pretrain_backbone == 'mmae': # and  "rgb" in observation_pairs.keys() and "depth" in observation_pairs.keys():
             

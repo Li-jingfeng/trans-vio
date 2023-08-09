@@ -12,6 +12,7 @@ import numpy as np
 import math
 from vo_transformer import VisualOdometryTransformerActEmbed
 from flowformer_model import FlowFormer_VO
+from flowformer_vio import FlowFormer_VIO
 
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument('--data_dir', type=str, default='./data', help='path to the dataset')
@@ -44,6 +45,7 @@ parser.add_argument('--model_type',type=str, default='cvpr', help='model type:[c
 parser.add_argument('--use_cnn',default=False, action='store_true', help='use flownet get cls_token')
 parser.add_argument('--use_imu',default=False, action='store_true', help='use imu_encoder as cls_token')
 parser.add_argument('--stage', type=str, default="kitti", help="determines which dataset to use for training") 
+parser.add_argument('--regression_mode', type=int, default=2, help="determines which regress_mode to use for flowformer_vo") 
 
 args = parser.parse_args()
 
@@ -83,6 +85,10 @@ def main():
         from flowformer.config.kitti import get_cfg
         cfg = get_cfg()
         model = FlowFormer_VO(cfg['latentcostformer'])
+    elif args.model_type == 'flowformer_vio':
+        from flowformer.config.kitti import get_cfg
+        cfg = get_cfg()
+        model = FlowFormer_VIO(cfg['latentcostformer'], regression_mode=args.regression_mode)
     weights = torch.load(args.model)
     new_state_dict = {k.replace('module.', ''): v for k, v in weights.items()}
     model.load_state_dict(new_state_dict, strict=True)

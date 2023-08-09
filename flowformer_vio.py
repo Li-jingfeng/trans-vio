@@ -7,19 +7,14 @@ from torch import einsum
 from einops.layers.torch import Rearrange
 from einops import rearrange
 
-# from utils.utils import coords_grid, bilinear_sampler, upflow8
-# from ..common import FeedForward, pyramid_retrieve_tokens, sampler, sampler_gaussian_fix, retrieve_tokens, MultiHeadAttention, MLP
 from flowformer.encoders import twins_svt_large_context, twins_svt_large
-# from ...position_encoding import PositionEncodingSine, LinearPositionEncoding
-# from .twins import PosConv
 from flowformer.encoder import MemoryEncoder
-# from .decoder import MemoryDecoder
 from flowformer.cnn import BasicEncoder
 import torch.nn.functional as F
 
-class FlowFormer_VO(nn.Module):
+class FlowFormer_VIO(nn.Module):
     def __init__(self, cfg, regression_mode=2):
-        super(FlowFormer_VO, self).__init__()
+        super(FlowFormer_VIO, self).__init__()
         self.cfg = cfg
         self.regression_mode = regression_mode
         self.memory_encoder = MemoryEncoder(cfg)
@@ -29,53 +24,78 @@ class FlowFormer_VO(nn.Module):
         elif cfg.cnet == 'basicencoder':
             self.context_encoder = BasicEncoder(output_dim=256, norm_fn='instance')
         # regress pose
+        # imu encoder
+        self.imu_dropout = 0.
+        self.inertial_encoder_conv = nn.Sequential(
+            nn.Conv1d(6, 64, kernel_size=3, padding=1),
+            nn.BatchNorm1d(64),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.Dropout(self.imu_dropout),
+            nn.Conv1d(64, 128, kernel_size=3, padding=1),
+            nn.BatchNorm1d(128),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.Dropout(self.imu_dropout),
+            nn.Conv1d(128, 256, kernel_size=3, padding=1),
+            nn.BatchNorm1d(256),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.Dropout(self.imu_dropout))
+        self.inertial_proj = nn.Linear(256 * 1 * 11, 256)
+        # visual encoder
         # 1
         self.out_dim = cfg.cost_latent_token_num * cfg.cost_latent_dim
         if self.regression_mode == 1:
-            self.regressor = nn.Sequential(
+            self.visual_regressor_vio = nn.Sequential(
                 nn.Linear(int(self.out_dim), 128),
                 nn.LeakyReLU(0.1, inplace=True),
-                # nn.Linear(1024, 128),
-                # nn.LeakyReLU(0.1, inplace=True),
                 nn.Linear(128, 6),
                 )
         # 2
         if self.regression_mode == 2:
             self.out_dim = cfg.cost_latent_token_num * cfg.cost_latent_dim
-            self.regressor_1 = nn.Sequential(
+            self.visual_regressor_vio_1 = nn.Sequential(
                 nn.Linear(int(self.out_dim), 128),
                 nn.LeakyReLU(0.1, inplace=True),
-                # nn.Linear(1024, 128),
-                # nn.LeakyReLU(0.1, inplace=True),
                 nn.Linear(128, 8),
                 )
-            self.regressor_2 = nn.Sequential(
+            self.visual_regressor_vio_2 = nn.Sequential(
                 nn.Linear(int(8*cfg.image_size[0]*cfg.image_size[1]/64), 2048),
                 nn.LeakyReLU(0.1, inplace=True),
                 nn.Linear(2048, 512),
                 nn.LeakyReLU(0.1, inplace=True),
-                nn.Linear(512, 128),
-                nn.LeakyReLU(0.1, inplace=True),
-                nn.Linear(128, 6),
+                # nn.Linear(512, 128),
+                # nn.LeakyReLU(0.1, inplace=True),
+                # nn.Linear(128, 6),
                 )
         # 3
         if self.regression_mode == 3:
-            self.regressor_3 = nn.Sequential(
+            self.visual_regressor_vio_3 = nn.Sequential(
                 nn.Linear(int(self.out_dim*(cfg.image_size[0]/8//7)*(cfg.image_size[1]/8//7)), 2048),
                 nn.LeakyReLU(0.1, inplace=True),
                 nn.Linear(2048, 512),
                 nn.LeakyReLU(0.1, inplace=True),
-                nn.Linear(512, 128),
-                nn.LeakyReLU(0.1, inplace=True),
-                nn.Linear(128, 6),
+                # nn.Linear(512, 128),
+                # nn.LeakyReLU(0.1, inplace=True),
+                # nn.Linear(128, 6),
             )
-    def forward(self, image1, image2, output=None, flow_init=None):
+        self.pose_regressor = nn.Sequential(
+            nn.Linear(768, 128),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.Linear(128, 6))
+    def forward(self, image1, image2, imu, output=None, flow_init=None):
         # Following https://github.com/princeton-vl/RAFT/
+        # imu encoder
+        batch_size = imu.shape[0]
+        seq_len = imu.shape[1]
+        imu = imu.view(batch_size * seq_len, imu.size(2), imu.size(3))    # x: (N x seq_len, 11, 6)
+        imu = self.inertial_encoder_conv(imu.permute(0, 2, 1))                 # x: (N x seq_len, 64, 11)
+        imu_feat = self.inertial_proj(imu.view(imu.shape[0], -1))      
+        # imu_feat = imu_feat.view(batch_size, seq_len, 256)
+
+        # visual encoder
         image1 = 2 * (image1 / 255.0) - 1.0
         image2 = 2 * (image2 / 255.0) - 1.0
 
         data = {}
-
         if self.cfg.context_concat:
             context = self.context_encoder(torch.cat([image1, image2], dim=1))
         else:
@@ -92,17 +112,20 @@ class FlowFormer_VO(nn.Module):
             x = cost_memory.reshape(B, self.cfg.cost_latent_token_num, self.cfg.predictor_dim, -1)
             x = torch.mean(x, dim=-1)
             out = x.reshape(B,-1)
-            out = self.rnn_drop_out(out)
-            pose = self.regressor(out)
+            # out = self.rnn_drop_out(out)
+            pose = self.visual_regressor_vio(out)
         # 2.先reshape 128*8->8，再reshapeH*W*8
         elif self.regression_mode == 2:
             x = cost_memory.reshape(B,H,W,-1)
-            x = self.regressor_1(x)
+            x = self.visual_regressor_vio_1(x)
             x = x.reshape(B,-1)
-            pose = self.regressor_2(x)
+            visual_feat = self.visual_regressor_vio_2(x)
+        # 3. 先downsample H*W，再reshape到低维
         elif self.regression_mode == 3:
             avg_pool_feat = F.avg_pool2d(cost_memory.reshape(B,H,W,-1).permute(0,3,1,2), kernel_size=7, stride=7)
-            pose = self.regressor_3(avg_pool_feat.reshape(B,-1))
-        # 3. 先downsample H*W，再reshape到低维
+            visual_feat = self.visual_regressor_vio_3(avg_pool_feat.reshape(B,-1))
+        # concat visual_feat and imu_feat, predict pose
+        all_feat = torch.cat([visual_feat, imu_feat], dim=-1)
+        pose = self.pose_regressor(all_feat)
         return pose.unsqueeze(1)
         # return cost_memory
