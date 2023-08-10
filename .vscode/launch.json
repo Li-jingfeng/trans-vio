@@ -190,6 +190,29 @@
             ]
         },
         {
+            "name": "test_flowformer_vio_lstm",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/test.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "env": {"CUDA_VISIBLE_DEVICES":"0"},
+            "args": [
+                "--gpu_ids","0",
+                "--data_dir","./data",
+                "--experiment_name","debug",
+                "--seq_len","11",
+                "--workers", "16",
+                "--patch_size","16",
+                "--model_type","flowformer_vio_lstm",
+                "--model","./results/flowformer_vio_lstm_regress_mode_2_update_lstm/checkpoints/010.pth",
+                "--img_w","480",//960
+                "--img_h","216",//432
+                "--stage","kitti",
+                "--regression_mode","2",
+            ]
+        },
+        {
             "name": "test",
             "type": "python",
             "request": "launch",

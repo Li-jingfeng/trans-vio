@@ -109,7 +109,8 @@ class KITTI_tester():
                     imgs_seq = torch.cat((x_in[:, :-1], x_in[:, 1:]), dim=2)
                     pose, hc = net(imgs_seq,i_in,hc=hc)
                     pose_seq = pose
-            pose_seq = torch.stack(pose_seq,dim=1).to(x_in.device)
+            if self.args.model_type != "flowformer_vio_lstm":
+                pose_seq = torch.stack(pose_seq,dim=1).to(x_in.device)
             pose_list.append(pose_seq[0,:,:].detach().cpu().numpy())
             # pose_list.append(pose[0,:,:].detach().cpu().numpy())
             decision_list.append(decision[0,:,:].detach().cpu().numpy()[:, 0])

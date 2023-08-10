@@ -585,13 +585,17 @@ def main():
                 param.requires_grad = True
             for param in model.visual_regressor_vio_2.parameters():
                 param.requires_grad = True
-        model.pose_net.requires_grad = True
+            for param in model.pose_net.parameters():
+                param.requires_grad = True
+        # model.pose_net.requires_grad = True   # 是error
 
         if args.add_part_weight:
             # 可以更新corss attention部分，CostPerceiverEncoder其他部分不参与forward也不参与更新
             for param in model.memory_encoder.cost_perceiver_encoder.input_layer.parameters():
                 param.requires_grad = True
             for param in model.memory_encoder.cost_perceiver_encoder.patch_embed.parameters():
+                param.requires_grad = True
+            for param in model.memory_encoder.cost_perceiver_encoder.latent_tokens.parameters():
                 param.requires_grad = True
             model.memory_encoder.cost_perceiver_encoder.latent_tokens.requires_grad = True
 
