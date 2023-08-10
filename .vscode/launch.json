@@ -114,7 +114,35 @@
                 // "--use_imu",
                 "--stage","kitti",
                 "--regression_mode","2",
-                "--add_part_weight","True",
+                "--add_part_weight",
+            ]
+        },
+        {
+            "name": "train_flowformer_vio_lstm",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/train.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            // "env": {"CUDA_VISIBLE_DEVICES":"1"},
+            "args": [
+                "--gpu_ids","3",
+                "--batch_size","2",
+                "--data_dir","./data",
+                "--experiment_name","debug",
+                "--seq_len","11",
+                "--workers", "8",
+                "--patch_size","16",
+                "--model_type","flowformer_vio_lstm",
+                "--pretrain","./model_zoo/flowformer_kitti.pth",
+                "--img_w","480",//960
+                "--img_h","216",//432
+                // "--pretrain_flownet","./model_zoo/flownets_bn_EPE2.459.pth.tar",
+                // "--use_cnn",
+                // "--use_imu",
+                "--stage","kitti",
+                "--regression_mode","2",
+                // "--add_part_weight",//先不更新cross attention，后面可以只让latent tokens更新，再后面上cross attention也更新
             ]
         },
         {

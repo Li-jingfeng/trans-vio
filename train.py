@@ -18,11 +18,11 @@ from torch.utils.data.distributed import DistributedSampler
 import torch.multiprocessing as mp
 # eccv2022 flowformer optical flow estimation
 from flowformer_model import FlowFormer_VO
-from flowformer_vio import FlowFormer_VIO
+from flowformer_vio import FlowFormer_VIO,FlowFormer_VIO_LSTM
 from gmflow.gmflow import GMFlow_VO
 EPSILON = 1e-8
 
-# from accelerate import Accelerator
+# from accelerate import Acceleraton
 # accelerator = Accelerator(split_batches=True)
 # device = accelerator.device
 rank=0
@@ -83,7 +83,7 @@ parser.add_argument('--use_imu',default=False, action='store_true', help='use im
 # eccv2022 flowformer
 parser.add_argument('--stage', type=str, default="kitti", help="determines which dataset to use for training") 
 parser.add_argument('--regression_mode', type=int, default=2, help="determines which regress_mode to use for flowformer_vo") 
-parser.add_argument('--add_part_weight', type=bool, default=False, help="是否加载flowformer部分权重文件") 
+parser.add_argument('--add_part_weight', default=False, action='store_true', help="有此参数为true,是否加载flowformer部分权重文件") 
 
 # 2022 GMFlow
 parser.add_argument('--gmflow_feature_channels', default=128, type=int)
@@ -300,7 +300,7 @@ def train(model, optimizer, train_loader, selection, temp, logger, ep, iter, p=0
         device = imgs.device
         decisions = torch.zeros(batch_size, seq_len, 2).to(device)
         probs = torch.zeros(batch_size, seq_len, 2).to(device)
-        if model_type != 'deepvio' and model_type != "svio_vo" and model_type != "flowformer_vo" and model_type != "gmflow_vo" and model_type != "flowformer_vio":
+        if model_type != 'deepvio' and model_type != "svio_vo" and model_type != "flowformer_vo" and model_type != "gmflow_vo" and model_type != "flowformer_vio" and model_type != "flowformer_vio_lstm":
             poses, pose_backward = [], []
             two_imgs_forward = torch.cat((imgs[:, :-1], imgs[:, 1:]), dim=2)
             two_imgs_backward = torch.cat((imgs[:, 1:], imgs[:, :-1]), dim=2)#额外添加
@@ -318,6 +318,9 @@ def train(model, optimizer, train_loader, selection, temp, logger, ep, iter, p=0
                 poses = torch.stack(poses,dim=0).to(device)
                 # pose_backward = torch.stack(pose_backward,dim=0).to(device)#额外添加
                 poses = poses.permute(1,0,2)
+        elif model_type == "flowformer_vio_lstm":
+            imgs_seq = torch.cat((imgs[:, :-1], imgs[:, 1:]), dim=2)
+            poses, _ = model(imgs_seq,imus,hc=None)
         elif model_type == "deepvio" or model_type == "svio_vo":
             poses = model(imgs)
         elif model_type == "flowformer_vo":
@@ -456,6 +459,11 @@ def main():
             from flowformer.config.kitti import get_cfg
             cfg = get_cfg()
         model = FlowFormer_VIO(cfg['latentcostformer'],regression_mode=args.regression_mode)
+    elif args.model_type == 'flowformer_vio_lstm':
+        if args.stage == 'kitti':
+            from flowformer.config.kitti import get_cfg
+            cfg = get_cfg()
+        model = FlowFormer_VIO_LSTM(cfg['latentcostformer'],regression_mode=args.regression_mode)
     elif args.model_type == 'gmflow_vo':
         model = GMFlow_VO(feature_channels=args.gmflow_feature_channels,
                    num_scales=args.gmflow_num_scales,
@@ -499,6 +507,12 @@ def main():
         if args.model_type == "flowformer_vo":
             model.load_state_dict(state_dict,strict=False)
         elif args.model_type == "flowformer_vio": # 与flowformer_vo保持一致
+            if args.add_part_weight:# flowformer_vio or 加载部分kitti权重
+                for k in list(state_dict):
+                    if "cost_perceiver_encoder" in k:
+                        del state_dict[k]
+            model.load_state_dict(state_dict,strict=False)
+        elif args.model_type == "flowformer_vio_lstm": # 与flowformer_vo保持一致
             if args.add_part_weight:# flowformer_vio or 加载部分kitti权重
                 for k in list(state_dict):
                     if "cost_perceiver_encoder" in k:
@@ -549,6 +563,30 @@ def main():
                 param.requires_grad = True
             for param in model.regressor_2.parameters():
                 param.requires_grad = True
+        if args.add_part_weight:
+            # 可以更新corss attention部分，CostPerceiverEncoder其他部分不参与forward也不参与更新
+            for param in model.memory_encoder.cost_perceiver_encoder.input_layer.parameters():
+                param.requires_grad = True
+            for param in model.memory_encoder.cost_perceiver_encoder.patch_embed.parameters():
+                param.requires_grad = True
+            model.memory_encoder.cost_perceiver_encoder.latent_tokens.requires_grad = True
+    elif args.model_type == 'flowformer_vio_lstm':
+        for param in model.parameters():
+            param.requires_grad = False
+        for param in model.inertial_encoder_conv.parameters():
+            param.requires_grad = True
+        for param in model.inertial_proj.parameters():
+            param.requires_grad = True
+        # 没有pose_regressor
+        # for param in model.pose_regressor.parameters():
+        #     param.requires_grad = True
+        if args.regression_mode == 2:
+            for param in model.visual_regressor_vio_1.parameters():
+                param.requires_grad = True
+            for param in model.visual_regressor_vio_2.parameters():
+                param.requires_grad = True
+        model.pose_net.requires_grad = True
+
         if args.add_part_weight:
             # 可以更新corss attention部分，CostPerceiverEncoder其他部分不参与forward也不参与更新
             for param in model.memory_encoder.cost_perceiver_encoder.input_layer.parameters():

@@ -12,7 +12,7 @@ import numpy as np
 import math
 from vo_transformer import VisualOdometryTransformerActEmbed
 from flowformer_model import FlowFormer_VO
-from flowformer_vio import FlowFormer_VIO
+from flowformer_vio import FlowFormer_VIO,FlowFormer_VIO_LSTM
 
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument('--data_dir', type=str, default='./data', help='path to the dataset')
@@ -89,6 +89,11 @@ def main():
         from flowformer.config.kitti import get_cfg
         cfg = get_cfg()
         model = FlowFormer_VIO(cfg['latentcostformer'], regression_mode=args.regression_mode)
+    elif args.model_type == 'flowformer_vio_lstm':
+        from flowformer.config.kitti import get_cfg
+        cfg = get_cfg()
+        model = FlowFormer_VIO_LSTM(cfg['latentcostformer'], regression_mode=args.regression_mode)
+    
     weights = torch.load(args.model)
     new_state_dict = {k.replace('module.', ''): v for k, v in weights.items()}
     model.load_state_dict(new_state_dict, strict=True)

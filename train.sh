@@ -72,3 +72,6 @@ python train.py --model_type flowformer_vo --regression_mode 2 --gpu_ids 3 --bat
 CUDA_VISIBLE_DEVICES="1,3" python train.py --model_type flowformer_vo --regression_mode 2 --batch_size 32 --data_dir ./data --experiment_name flowformer_vo_regress_mode_2_update_all_b32 --seq_len 2 --workers 16 --patch_size 16 --epochs_warmup 20 --epochs_joint 80 --epochs_fine 40 --img_w 480 --img_h 216 --stage kitti --pretrain ./model_zoo/flowformer_kitti.pth
 # 2023/8/9  除了regressor之外，同时将cross attention纳入更新，而且加载权重时不加载这部分权重  多了一个add_part_weight参数
 python train.py --model_type flowformer_vio --regression_mode 2 --add_part_weight True --gpu_ids 0 --batch_size 48 --data_dir ./data --experiment_name flowformer_vio_regress_mode_2_update_cross_attn --seq_len 2 --workers 16 --patch_size 16 --epochs_warmup 20 --epochs_joint 80 --epochs_fine 40 --img_w 480 --img_h 216 --stage kitti --pretrain ./model_zoo/flowformer_kitti.pth
+# 加入lstm 仍然是flowformer_vio_lstm 更新lstm，不更新cross attention，看一下对估计有无影响
+CUDA_VISIBLE_DEVICES="0,1" python train.py --model_type flowformer_vio_lstm --regression_mode 2 --batch_size 48 --data_dir ./data --experiment_name flowformer_vio_lstm_regress_mode_2_update_lstm --seq_len 11 --workers 16 --patch_size 16 --epochs_warmup 20 --epochs_joint 80 --epochs_fine 40 --img_w 480 --img_h 216 --stage kitti --pretrain ./model_zoo/flowformer_kitti.pth
+
