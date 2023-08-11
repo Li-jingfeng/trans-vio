@@ -12,7 +12,8 @@ import numpy as np
 import math
 from vo_transformer import VisualOdometryTransformerActEmbed
 from flowformer_model import FlowFormer_VO
-from flowformer_vio import FlowFormer_VIO,FlowFormer_VIO_LSTM
+from flowformer_vio import FlowFormer_VIO
+from flowformer_vio_lstm import FlowFormer_VIO_LSTM
 
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument('--data_dir', type=str, default='./data', help='path to the dataset')

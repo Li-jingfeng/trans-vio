@@ -18,7 +18,8 @@ from torch.utils.data.distributed import DistributedSampler
 import torch.multiprocessing as mp
 # eccv2022 flowformer optical flow estimation
 from flowformer_model import FlowFormer_VO
-from flowformer_vio import FlowFormer_VIO,FlowFormer_VIO_LSTM
+from flowformer_vio import FlowFormer_VIO
+from flowformer_vio_lstm import FlowFormer_VIO_LSTM
 from gmflow.gmflow import GMFlow_VO
 EPSILON = 1e-8
 
@@ -319,8 +320,8 @@ def train(model, optimizer, train_loader, selection, temp, logger, ep, iter, p=0
                 # pose_backward = torch.stack(pose_backward,dim=0).to(device)#额外添加
                 poses = poses.permute(1,0,2)
         elif model_type == "flowformer_vio_lstm":
-            imgs_seq = torch.cat((imgs[:, :-1], imgs[:, 1:]), dim=2)
-            poses, _ = model(imgs_seq,imus,hc=None)
+            # imgs_seq = torch.cat((imgs[:, :-1], imgs[:, 1:]), dim=2)
+            poses, _ = model(imgs,imus,hc=None)
         elif model_type == "deepvio" or model_type == "svio_vo":
             poses = model(imgs)
         elif model_type == "flowformer_vo":
