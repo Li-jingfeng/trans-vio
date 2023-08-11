@@ -255,8 +255,8 @@ class FlowFormer_VIO_LSTM(nn.Module):
         all_visual_feat = torch.cat(all_visual_feat,dim=1)
         poses = []
         for i in range(seq_len):
-            pose, hc = self.pose_net(all_visual_feat[:,i], imu_feat[:,i], hc)
-            poses.append(pose.unsqueeze(1))
+            pose, hc = self.pose_net(all_visual_feat[:,i:i+1,:], imu_feat[:,i:i+1,:], hc)
+            poses.append(pose)
         poses = torch.cat(poses,dim=1)
         return poses,hc
         # return cost_memory
