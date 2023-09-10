@@ -18,6 +18,9 @@ from torch.utils.data.distributed import DistributedSampler
 import torch.multiprocessing as mp
 # eccv2022 flowformer optical flow estimation
 from flowformer_model import FlowFormer_VO
+from flowformer_extractor_model import FlowFormer_Extractor_VO
+from flowformer_extractor_nocorr_model import FlowFormer_Extractor_nocorr_VO
+from FlowFormer_VO_part_corr_model import FlowFormer_VO_part_corr
 from flowformer_vio import FlowFormer_VIO
 from flowformer_vio_lstm import FlowFormer_VIO_LSTM
 from gmflow.gmflow import GMFlow_VO
@@ -36,7 +39,7 @@ parser.add_argument('--gpu_ids', type=str, default='0,1', help='gpu ids: e.g. 0 
 parser.add_argument('--save_dir', type=str, default='/disk1/ljf/VO-Transformer/results', help='path to save the result')
 
 parser.add_argument('--train_seq', type=list, default=['00', '01', '02', '04', '06', '08', '09'], help='sequences for training')
-parser.add_argument('--val_seq', type=list, default=['05', '07', '10', '01', '02', '04'], help='sequences for validation')
+parser.add_argument('--val_seq', type=list, default=['05', '07', '10', '12', '01', '02', '04'], help='sequences for validation')
 parser.add_argument('--seed', type=int, default=0, help='random seed')
 
 parser.add_argument('--img_w', type=int, default=512, help='image width')
@@ -301,7 +304,7 @@ def train(model, optimizer, train_loader, selection, temp, logger, ep, iter, p=0
         device = imgs.device
         decisions = torch.zeros(batch_size, seq_len, 2).to(device)
         probs = torch.zeros(batch_size, seq_len, 2).to(device)
-        if model_type != 'deepvio' and model_type != "svio_vo" and model_type != "flowformer_vo" and model_type != "gmflow_vo" and model_type != "flowformer_vio" and model_type != "flowformer_vio_lstm":
+        if model_type != 'deepvio' and model_type != "svio_vo" and model_type != "flowformer_vo" and model_type != "gmflow_vo" and model_type != "flowformer_vio" and model_type != "flowformer_vio_lstm" and model_type != "flowformer_extractor_vo" and model_type != "flowformer_extractor_nocorr_vo" and model_type != "flowformer_vo_part_corr":
             poses, pose_backward = [], []
             two_imgs_forward = torch.cat((imgs[:, :-1], imgs[:, 1:]), dim=2)
             two_imgs_backward = torch.cat((imgs[:, 1:], imgs[:, :-1]), dim=2)#额外添加
@@ -325,6 +328,18 @@ def train(model, optimizer, train_loader, selection, temp, logger, ep, iter, p=0
         elif model_type == "deepvio" or model_type == "svio_vo":
             poses = model(imgs)
         elif model_type == "flowformer_vo":
+            img0 = imgs[:, 0]
+            img1 = imgs[:, 1]
+            poses = model(img0,img1)
+        elif model_type == "flowformer_extractor_vo":
+            img0 = imgs[:, 0]
+            img1 = imgs[:, 1]
+            poses = model(img0,img1)
+        elif model_type == "flowformer_vo_part_corr":
+            img0 = imgs[:, 0]
+            img1 = imgs[:, 1]
+            poses = model(img0,img1)
+        elif model_type == "flowformer_extractor_nocorr_vo":
             img0 = imgs[:, 0]
             img1 = imgs[:, 1]
             poses = model(img0,img1)
@@ -397,7 +412,7 @@ def main():
     # setup(rank, world_size)
     # Create Dir
     # experiment_dir = Path(args.save_dir)
-    experiment_dir = Path('./results')
+    experiment_dir = Path('./new_results')
     experiment_dir.mkdir_p()
     file_dir = experiment_dir.joinpath('{}/'.format(args.experiment_name))
     file_dir.mkdir_p()
@@ -454,7 +469,26 @@ def main():
         if args.stage == 'kitti':
             from flowformer.config.kitti import get_cfg
             cfg = get_cfg()
+            # 仅仅针对flowformer_vo过拟合加上dropout
+            cfg['latentcostformer'].dropout=0.
+            cfg['latentcostformer'].attn_drop=0.
+            cfg['latentcostformer'].proj_drop=0.
         model = FlowFormer_VO(cfg['latentcostformer'],regression_mode=args.regression_mode)
+    elif args.model_type == 'flowformer_extractor_vo':
+        if args.stage == 'kitti':
+            from flowformer.config.kitti import get_cfg
+            cfg = get_cfg()
+        model = FlowFormer_Extractor_VO(cfg['latentcostformer'],regression_mode=args.regression_mode)
+    elif args.model_type == 'flowformer_vo_part_corr':
+        if args.stage == 'kitti':
+            from flowformer.config.kitti import get_cfg
+            cfg = get_cfg()
+        model = FlowFormer_VO_part_corr(cfg['latentcostformer'],regression_mode=args.regression_mode)
+    elif args.model_type == 'flowformer_extractor_nocorr_vo':
+        if args.stage == 'kitti':
+            from flowformer.config.kitti import get_cfg
+            cfg = get_cfg()
+        model = FlowFormer_Extractor_nocorr_VO(cfg['latentcostformer'],regression_mode=args.regression_mode)
     elif args.model_type == 'flowformer_vio':
         if args.stage == 'kitti':
             from flowformer.config.kitti import get_cfg
@@ -506,6 +540,12 @@ def main():
         state_dict = {k.replace("module.", "") if "module." in k else k: v for k, v in state_dict.items()}
 
         if args.model_type == "flowformer_vo":
+            model.load_state_dict(state_dict,strict=False)
+        elif args.model_type == "flowformer_extractor_vo":
+            model.load_state_dict(state_dict,strict=False)
+        elif args.model_type == "flowformer_extractor_nocorr_vo":
+            model.load_state_dict(state_dict,strict=False)
+        elif args.model_type == "flowformer_vo_part_corr":
             model.load_state_dict(state_dict,strict=False)
         elif args.model_type == "flowformer_vio": # 与flowformer_vo保持一致
             if args.add_part_weight:# flowformer_vio or 加载部分kitti权重
@@ -655,7 +695,7 @@ def main():
 
         # if ep > args.epochs_warmup+args.epochs_joint or ep%10==0:
         # 这个也需要更改，这里是update all batch_size=16,所以所有的epoch除3
-        if ep%10==0 and ep!=0:
+        if ep%10==0:
             # Evaluate the model
             print('Evaluating the model')
             logger.info('Evaluating the model')
@@ -692,23 +732,29 @@ def main():
             if args.experiment_name != 'debug':
                 wandb.log({"Epoch": ep, "iter":iter, "10. t_rel": round(errors[2]['t_rel'], 4), "10. r_rel": round(errors[2]['r_rel'], 4), "10. t_rmse": round(errors[2]['t_rmse'], 4), "10. r_rmse": round(errors[2]['r_rmse'], 4)})
             
-            message = "Epoch {} iter {} evaluation Seq. 01 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, iter, round(errors[3]['t_rel'], 4), round(errors[3]['r_rel'], 4), round(errors[3]['t_rmse'], 4), round(errors[3]['r_rmse'], 4))
+            message = "Epoch {} iter {} evaluation Seq. 12——line , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, iter, round(errors[3]['t_rel'], 4), round(errors[3]['r_rel'], 4), round(errors[3]['t_rmse'], 4), round(errors[3]['r_rmse'], 4))
             logger.info(message)
             print(message)
             if args.experiment_name != 'debug':
-                wandb.log({"Epoch": ep, "iter":iter, "01. t_rel": round(errors[3]['t_rel'], 4), "01. r_rel": round(errors[3]['r_rel'], 4), "01. t_rmse": round(errors[3]['t_rmse'], 4), "01. r_rmse": round(errors[3]['r_rmse'], 4)})
+                wandb.log({"Epoch": ep, "iter":iter, "12. t_rel": round(errors[3]['t_rel'], 4), "12. r_rel": round(errors[3]['r_rel'], 4), "12. t_rmse": round(errors[3]['t_rmse'], 4), "12. r_rmse": round(errors[3]['r_rmse'], 4)})
             
-            message = "Epoch {} iter {} evaluation Seq. 02 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, iter, round(errors[4]['t_rel'], 4), round(errors[4]['r_rel'], 4), round(errors[4]['t_rmse'], 4), round(errors[4]['r_rmse'], 4))
+            message = "Epoch {} iter {} evaluation Seq. 01 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, iter, round(errors[4]['t_rel'], 4), round(errors[4]['r_rel'], 4), round(errors[4]['t_rmse'], 4), round(errors[4]['r_rmse'], 4))
             logger.info(message)
             print(message)
             if args.experiment_name != 'debug':
-                wandb.log({"Epoch": ep, "iter":iter, "02. t_rel": round(errors[4]['t_rel'], 4), "02. r_rel": round(errors[4]['r_rel'], 4), "02. t_rmse": round(errors[4]['t_rmse'], 4), "02. r_rmse": round(errors[4]['r_rmse'], 4)})
+                wandb.log({"Epoch": ep, "iter":iter, "01. t_rel": round(errors[4]['t_rel'], 4), "01. r_rel": round(errors[4]['r_rel'], 4), "01. t_rmse": round(errors[4]['t_rmse'], 4), "01. r_rmse": round(errors[4]['r_rmse'], 4)})
             
-            message = "Epoch {} iter {} evaluation Seq. 04 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, iter, round(errors[5]['t_rel'], 4), round(errors[5]['r_rel'], 4), round(errors[5]['t_rmse'], 4), round(errors[5]['r_rmse'], 4))
+            message = "Epoch {} iter {} evaluation Seq. 02 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, iter, round(errors[5]['t_rel'], 4), round(errors[5]['r_rel'], 4), round(errors[5]['t_rmse'], 4), round(errors[5]['r_rmse'], 4))
             logger.info(message)
             print(message)
             if args.experiment_name != 'debug':
-                wandb.log({"Epoch": ep, "iter":iter, "04. t_rel": round(errors[5]['t_rel'], 4), "04. r_rel": round(errors[5]['r_rel'], 4), "04. t_rmse": round(errors[5]['t_rmse'], 4), "04. r_rmse": round(errors[5]['r_rmse'], 4)})
+                wandb.log({"Epoch": ep, "iter":iter, "02. t_rel": round(errors[5]['t_rel'], 4), "02. r_rel": round(errors[5]['r_rel'], 4), "02. t_rmse": round(errors[5]['t_rmse'], 4), "02. r_rmse": round(errors[5]['r_rmse'], 4)})
+            
+            message = "Epoch {} iter {} evaluation Seq. 04 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, iter, round(errors[6]['t_rel'], 4), round(errors[6]['r_rel'], 4), round(errors[6]['t_rmse'], 4), round(errors[6]['r_rmse'], 4))
+            logger.info(message)
+            print(message)
+            if args.experiment_name != 'debug':
+                wandb.log({"Epoch": ep, "iter":iter, "04. t_rel": round(errors[6]['t_rel'], 4), "04. r_rel": round(errors[6]['r_rel'], 4), "04. t_rmse": round(errors[6]['t_rmse'], 4), "04. r_rmse": round(errors[6]['r_rmse'], 4)})
             
             logger.info(message)
             print(message)

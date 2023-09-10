@@ -12,6 +12,8 @@ import numpy as np
 import math
 from vo_transformer import VisualOdometryTransformerActEmbed
 from flowformer_model import FlowFormer_VO
+from flowformer_extractor_model import FlowFormer_Extractor_VO
+from flowformer_extractor_nocorr_model import FlowFormer_Extractor_nocorr_VO
 from flowformer_vio import FlowFormer_VIO
 from flowformer_vio_lstm import FlowFormer_VIO_LSTM
 
@@ -22,7 +24,7 @@ parser.add_argument('--save_dir', type=str, default='/disk1/ljf/VO-Transformer/r
 parser.add_argument('--seq_len', type=int, default=11, help='sequence length for LSTM')
 
 parser.add_argument('--train_seq', type=list, default=['00', '01', '02', '04', '06', '08', '09'], help='sequences for training')
-parser.add_argument('--val_seq', type=list, default=['04'], help='sequences for validation')
+parser.add_argument('--val_seq', type=list, default=['02', '04', '05', '12'], help='sequences for validation')
 parser.add_argument('--seed', type=int, default=0, help='random seed')
 
 parser.add_argument('--img_w', type=int, default=512, help='image width')
@@ -47,7 +49,6 @@ parser.add_argument('--use_cnn',default=False, action='store_true', help='use fl
 parser.add_argument('--use_imu',default=False, action='store_true', help='use imu_encoder as cls_token')
 parser.add_argument('--stage', type=str, default="kitti", help="determines which dataset to use for training") 
 parser.add_argument('--regression_mode', type=int, default=2, help="determines which regress_mode to use for flowformer_vo") 
-
 args = parser.parse_args()
 
 # Set the random seed
@@ -85,7 +86,15 @@ def main():
     elif args.model_type == 'flowformer_vo':
         from flowformer.config.kitti import get_cfg
         cfg = get_cfg()
-        model = FlowFormer_VO(cfg['latentcostformer'])
+        model = FlowFormer_VO(cfg['latentcostformer'], regression_mode=args.regression_mode)
+    elif args.model_type == 'flowformer_extractor_vo':
+        from flowformer.config.kitti import get_cfg
+        cfg = get_cfg()
+        model = FlowFormer_Extractor_VO(cfg['latentcostformer'], regression_mode=args.regression_mode)
+    elif args.model_type == 'flowformer_extractor_nocorr_vo':
+        from flowformer.config.kitti import get_cfg
+        cfg = get_cfg()
+        model = FlowFormer_Extractor_nocorr_VO(cfg['latentcostformer'], regression_mode=args.regression_mode)
     elif args.model_type == 'flowformer_vio':
         from flowformer.config.kitti import get_cfg
         cfg = get_cfg()

@@ -60,7 +60,7 @@ CUDA_VISIBLE_DEVICES="2" python train.py --model_type flowformer_vo --regression
 # flowformer_vo regression_mode=3 only update regressor3
 CUDA_VISIBLE_DEVICES="3" python train.py --model_type flowformer_vo --regression_mode 3 --gpu_ids 0 --batch_size 50 --data_dir ./data --experiment_name flowformer_vo_regress_mode_3_update_regressor --seq_len 2 --workers 16 --patch_size 16 --epochs_warmup 20 --epochs_joint 100 --epochs_fine 40 --img_w 480 --img_h 216 --stage kitti --pretrain ./model_zoo/flowformer_kitti.pth
 # flowformer_vo regression_mode=2 only update regressor1 and 2
-# 这个版本达到过拟合的效果
+# 这个版本达到过拟合的效果->2023.8.29新跑了一个实验【seq12_flowformer_vo_regress_mode_2_update_regressor】，因为之前权重没了，wandb中seq1是seq12的测试结果
 CUDA_VISIBLE_DEVICES="2" python train.py --model_type flowformer_vo --regression_mode 2 --gpu_ids 0 --batch_size 50 --data_dir ./data --experiment_name flowformer_vo_regress_mode_2_update_regressor --seq_len 2 --workers 16 --patch_size 16 --epochs_warmup 20 --epochs_joint 80 --epochs_fine 40 --img_w 480 --img_h 216 --stage kitti --pretrain ./model_zoo/flowformer_kitti.pth
 # 针对上一过拟合的版本，不修改参数，在最后加入imu feature concat做预测，看能不能缓减过拟合效果，同时达到更好的结果---->结果是可以缓减过拟合，结果更好
 python train.py --model_type flowformer_vio --regression_mode 2 --gpu_ids 3 --batch_size 50 --data_dir ./data --experiment_name flowformer_vio_regress_mode_2_freeze_backbone --seq_len 2 --workers 16 --patch_size 16 --epochs_warmup 20 --epochs_joint 80 --epochs_fine 40 --img_w 480 --img_h 216 --stage kitti --pretrain ./model_zoo/flowformer_kitti.pth
@@ -75,4 +75,25 @@ python train.py --model_type flowformer_vio --regression_mode 2 --add_part_weigh
 # 加入lstm 仍然是flowformer_vio_lstm 更新lstm，不更新cross attention，看一下对估计有无影响
 CUDA_VISIBLE_DEVICES="0,1" python train.py --model_type flowformer_vio_lstm --regression_mode 2 --batch_size 48 --data_dir ./data --experiment_name flowformer_vio_lstm_regress_mode_2_update_lstm --seq_len 11 --workers 16 --patch_size 16 --epochs_warmup 20 --epochs_joint 80 --epochs_fine 40 --img_w 480 --img_h 216 --stage kitti --pretrain ./model_zoo/flowformer_kitti.pth
 # 修改了之前for循环的操作
-CUDA_VISIBLE_DEVICES="0,1" python train.py --model_type flowformer_vio_lstm --regression_mode 2 --batch_size 48 --data_dir ./data --experiment_name fix_flowformer_vio_lstm_regress_mode_2_update_lstm --seq_len 11 --workers 32 --patch_size 16 --epochs_warmup 20 --epochs_joint 80 --epochs_fine 40 --img_w 480 --img_h 216 --stage kitti --pretrain ./model_zoo/flowformer_kitti.pth
+CUDA_VISIBLE_DEVICES="0,1" python train.py --model_type flowformer_vio_lstm --regression_mode 2 --batch_size 48 --data_dir ./data --experiment_name fix_lstm_flowformer_vio_lstm_regress_mode_2_update_lstm --seq_len 11 --workers 32 --patch_size 16 --epochs_warmup 20 --epochs_joint 80 --epochs_fine 40 --img_w 480 --img_h 216 --stage kitti --pretrain ./model_zoo/flowformer_kitti.pth
+# 只保留transformer feature extractor，这样的话必须要将extractor开放训练 [no corss attention] 没有freeze，全部开放训练
+CUDA_VISIBLE_DEVICES="3" python train.py --model_type flowformer_extractor_vo --regression_mode 2 --gpu_ids 0 --batch_size 50 --data_dir ./data --experiment_name flowformer_extractor_vo__regress_mode_2_update_regressor --seq_len 2 --workers 16 --patch_size 16 --epochs_warmup 20 --epochs_joint 80 --epochs_fine 40 --img_w 480 --img_h 216 --stage kitti --pretrain ./model_zoo/flowformer_kitti.pth
+# 在上一步的基础上删掉correlation操作
+CUDA_VISIBLE_DEVICES="3" python train.py --model_type flowformer_extractor_nocorr_vo --regression_mode 2 --gpu_ids 0 --batch_size 48 --data_dir ./data --experiment_name flowformer_extractor_nocorr_vo__regress_mode_2_update_regressor --seq_len 2 --workers 16 --patch_size 16 --epochs_warmup 20 --epochs_joint 80 --epochs_fine 40 --img_w 480 --img_h 216 --stage kitti --pretrain ./model_zoo/flowformer_kitti.pth
+# 再上一步基础上针对source和target feature使用不同的regressor，这里使用相同的regressor_s_1和2
+CUDA_VISIBLE_DEVICES="3" python train.py --model_type flowformer_extractor_nocorr_vo --regression_mode 2 --gpu_ids 0 --batch_size 48 --data_dir ./data --experiment_name flowformer_extractor_nocorr_regressor_same_vo__regress_mode_2_update_regressor --seq_len 2 --workers 16 --patch_size 16 --epochs_warmup 20 --epochs_joint 80 --epochs_fine 40 --img_w 480 --img_h 216 --stage kitti --pretrain ./model_zoo/flowformer_kitti.pth
+# 在最开始flowformer_vo的基础上加上dropout
+CUDA_VISIBLE_DEVICES="1" python train.py --model_type flowformer_vo --regression_mode 2 --gpu_ids 0 --batch_size 50 --data_dir ./data --experiment_name flowformer_vo_regress_mode_2_update_regressor_drop0.2 --seq_len 2 --workers 16 --patch_size 16 --epochs_warmup 20 --epochs_joint 80 --epochs_fine 40 --img_w 480 --img_h 216 --stage kitti --pretrain ./model_zoo/flowformer_kitti.pth
+# 在本来添加dropout的基础上增加proj_out和attn_drop，相应的代码有改动
+CUDA_VISIBLE_DEVICES="1" python train.py --model_type flowformer_vo --regression_mode 2 --gpu_ids 0 --batch_size 50 --data_dir ./data --experiment_name flowformer_vo_regress_mode_2_update_regressor_all_drop0.5 --seq_len 2 --workers 16 --patch_size 16 --epochs_warmup 20 --epochs_joint 80 --epochs_fine 40 --img_w 480 --img_h 216 --stage kitti --pretrain ./model_zoo/flowformer_kitti.pth
+# sparse window corr  like extractor_vo update all 因为有for循环太慢了
+CUDA_VISIBLE_DEVICES="0" python train.py --model_type flowformer_vo_part_corr --regression_mode 2 --gpu_ids 0 --batch_size 48 --data_dir ./data --experiment_name flowformer_vo_regress_mode_2_update_all_part_corr --seq_len 2 --workers 16 --patch_size 16 --epochs_warmup 20 --epochs_joint 80 --epochs_fine 40 --img_w 480 --img_h 216 --stage kitti --pretrain ./model_zoo/flowformer_kitti.pth
+# 与上一个实验不同的是，我们在前一张进行稀疏话，再与第二帧所有pixel进行corr
+# stride=3
+CUDA_VISIBLE_DEVICES="0" python train.py --model_type flowformer_vo_part_corr --regression_mode 2 --gpu_ids 0 --batch_size 48 --data_dir ./data --experiment_name flowformer_vo_regress_mode_2_update_all_stride3 --seq_len 2 --workers 16 --patch_size 16 --epochs_warmup 20 --epochs_joint 80 --epochs_fine 40 --img_w 480 --img_h 216 --stage kitti --pretrain ./model_zoo/flowformer_kitti.pth
+#stride=9
+CUDA_VISIBLE_DEVICES="3" python train.py --model_type flowformer_vo_part_corr --regression_mode 2 --gpu_ids 0 --batch_size 48 --data_dir ./data --experiment_name flowformer_vo_regress_mode_2_update_all_stride9 --seq_len 2 --workers 16 --patch_size 16 --epochs_warmup 20 --epochs_joint 80 --epochs_fine 40 --img_w 480 --img_h 216 --stage kitti --pretrain ./model_zoo/flowformer_kitti.pth
+# stride=6
+CUDA_VISIBLE_DEVICES="2" python train.py --model_type flowformer_vo_part_corr --regression_mode 2 --gpu_ids 0 --batch_size 48 --data_dir ./data --experiment_name flowformer_vo_regress_mode_2_update_all_stride6 --seq_len 2 --workers 16 --patch_size 16 --epochs_warmup 20 --epochs_joint 80 --epochs_fine 40 --img_w 480 --img_h 216 --stage kitti --pretrain ./model_zoo/flowformer_kitti.pth
+
+# sparse attention 

@@ -20,7 +20,8 @@ class data_partition():
         self.seq_len = opt.seq_len
         self.folder = folder
         self.load_data()
-
+        # 机器人得到的实际数据，同样添加到sequences、imus、poses文件夹中，目前没有录制imus数据（用11的imu替代），编号从12开始！只测试flowformer_vo
+        # 12是video-line的数据
     def load_data(self):
         image_dir = self.data_dir + '/sequences/'
         imu_dir = self.data_dir + '/imus/'
@@ -98,6 +99,18 @@ class KITTI_tester():
                     pose = pose.squeeze(1)
                     pose_seq.append(pose)
                 elif self.args.model_type == 'flowformer_vo':
+                    pose = net(x_in[:,0],x_in[:,1])
+                    pose = pose.squeeze(1)
+                    pose_seq.append(pose)
+                elif self.args.model_type == 'flowformer_extractor_vo':
+                    pose = net(x_in[:,0],x_in[:,1])
+                    pose = pose.squeeze(1)
+                    pose_seq.append(pose)
+                elif self.args.model_type == 'flowformer_vo_part_corr':
+                    pose = net(x_in[:,0],x_in[:,1])
+                    pose = pose.squeeze(1)
+                    pose_seq.append(pose)
+                elif self.args.model_type == 'flowformer_extractor_nocorr_vo':
                     pose = net(x_in[:,0],x_in[:,1])
                     pose = pose.squeeze(1)
                     pose_seq.append(pose)

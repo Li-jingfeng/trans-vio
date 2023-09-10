@@ -68,7 +68,7 @@
             "program": "${workspaceFolder}/train.py",
             "console": "integratedTerminal",
             "justMyCode": false,
-            "env": {"CUDA_VISIBLE_DEVICES":"1"},
+            "env": {"CUDA_VISIBLE_DEVICES":"0"},
             "args": [
                 "--gpu_ids","0",
                 "--batch_size","16",
@@ -85,6 +85,124 @@
                 // "--pretrain_flownet","./model_zoo/flownets_bn_EPE2.459.pth.tar",
                 // "--use_cnn",
                 // "--use_imu",
+                "--stage","kitti",
+                "--regression_mode","2"
+            ]
+        },
+        {
+            "name": "test_flowformer_vo",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/test.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "env": {"CUDA_VISIBLE_DEVICES":"1"},
+            "args": [
+                "--gpu_ids","0",
+                "--data_dir","./data",
+                "--experiment_name","test_seq_12",
+                "--seq_len","2",
+                "--workers", "16",
+                "--patch_size","16",
+                "--model_type","flowformer_vo",
+                "--model","./results/flowformer_vo_regress_mode_2_update_regressor/checkpoints/150.pth",
+                "--img_w","480",//960
+                "--img_h","216",//432
+                "--stage","kitti",
+                "--regression_mode","2"
+            ]
+        },
+        {
+            "name": "train_flowformer_vo_part_corr",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/train.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "env": {"CUDA_VISIBLE_DEVICES":"2"},
+            "args": [
+                "--gpu_ids","0",
+                "--batch_size","48",
+                "--data_dir","./data",
+                "--experiment_name","debug",
+                "--seq_len","2",
+                "--workers", "8",
+                "--patch_size","16",
+                "--model_type","flowformer_vo_part_corr",
+                "--pretrain","./model_zoo/flowformer_kitti.pth",
+                "--img_w","480",//960
+                "--img_h","216",//432
+                "--stage","kitti",
+                "--regression_mode","2"
+            ]
+        },
+        {
+            "name": "train_flowformer_extractor_vo",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/train.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "env": {"CUDA_VISIBLE_DEVICES":"0"},
+            "args": [
+                "--gpu_ids","0",
+                "--batch_size","48",
+                "--data_dir","./data",
+                "--experiment_name","debug",
+                "--seq_len","2",
+                "--workers", "8",
+                "--patch_size","16",
+                "--model_type","flowformer_extractor_vo",
+                "--pretrain","./model_zoo/flowformer_kitti.pth",
+                "--img_w","480",//960
+                "--img_h","216",//432
+                "--stage","kitti",
+                "--regression_mode","2"
+            ]
+        },
+        {
+            "name": "test_flowformer_extractor_vo",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/test.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "env": {"CUDA_VISIBLE_DEVICES":"0"},
+            "args": [
+                "--gpu_ids","0",
+                "--data_dir","./data",
+                "--experiment_name","test",
+                "--seq_len","2",
+                "--workers", "8",
+                "--patch_size","16",
+                "--model_type","flowformer_extractor_vo",
+                "--model","/disk1/lijingfeng/pro/trans-vio/results/flowformer_extractor_vo__regress_mode_2_update_regressor/checkpoints/130.pth",
+                "--img_w","480",//960
+                "--img_h","216",//432
+                "--stage","kitti",
+                "--regression_mode","2"
+            ]
+        },
+        {
+            "name": "train_flowformer_extractor_nocorr_vo",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/train.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "env": {"CUDA_VISIBLE_DEVICES":"1"},
+            "args": [
+                "--gpu_ids","0",
+                "--batch_size","48",
+                "--data_dir","./data",
+                "--experiment_name","debug",
+                "--seq_len","2",
+                "--workers", "8",
+                "--patch_size","16",
+                "--model_type","flowformer_extractor_nocorr_vo",
+                "--pretrain","./model_zoo/flowformer_kitti.pth",
+                "--img_w","480",//960
+                "--img_h","216",//432
                 "--stage","kitti",
                 "--regression_mode","2"
             ]
@@ -114,7 +232,7 @@
                 // "--use_imu",
                 "--stage","kitti",
                 "--regression_mode","2",
-                "--add_part_weight",
+                //"--add_part_weight",
             ]
         },
         {

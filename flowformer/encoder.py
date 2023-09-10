@@ -96,9 +96,9 @@ class GroupVerticalSelfAttentionLayer(nn.Module):
         dpr = 0.
         drop_rate = dropout
         attn_drop_rate=0.
-
+        # 将attn_drop_rate改为attn_drop
         self.block = Block(dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, drop=drop_rate,
-                attn_drop=attn_drop_rate, drop_path=dpr, sr_ratio=sr_ratio, ws=ws, with_rpe=True, vert_c_dim=cfg.vert_c_dim, groupattention=True, cfg=self.cfg)
+                attn_drop=attn_drop, drop_path=dpr, sr_ratio=sr_ratio, ws=ws, with_rpe=True, vert_c_dim=cfg.vert_c_dim, groupattention=True, cfg=self.cfg)
 
     def forward(self, x, size, context=None):
         x = self.block(x, size, context)
@@ -120,8 +120,8 @@ class VerticalSelfAttentionLayer(nn.Module):
         sr_ratio = 4
         dpr = 0.
         drop_rate = dropout
-        attn_drop_rate=0.
-
+        attn_drop_rate=0.5  # 本来是0.
+        # 将attn_drop_rate改为attn_drop
         self.local_block = Block(dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, drop=drop_rate,
                 attn_drop=attn_drop_rate, drop_path=dpr, sr_ratio=sr_ratio, ws=ws, with_rpe=True, vert_c_dim=cfg.vert_c_dim)
         self.global_block = Block(dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, drop=drop_rate,
@@ -258,8 +258,8 @@ class CostPerceiverEncoder(nn.Module):
 
         if cfg.use_mlp:
             self.encoder_layers = nn.ModuleList([MLPMixerLayer(cfg.cost_latent_dim, cfg, dropout=cfg.dropout) for idx in range(self.depth)])
-        else:
-            self.encoder_layers = nn.ModuleList([SelfAttentionLayer(cfg.cost_latent_dim, cfg, dropout=cfg.dropout) for idx in range(self.depth)])
+        else:# 这里添加proj_drop参数，本来没有
+            self.encoder_layers = nn.ModuleList([SelfAttentionLayer(cfg.cost_latent_dim, cfg, dropout=cfg.dropout,proj_drop=cfg.proj_drop) for idx in range(self.depth)])
 
         if self.cfg.vertical_conv:
             self.vertical_encoder_layers = nn.ModuleList([ConvNextLayer(cfg.cost_latent_dim) for idx in range(self.depth)])

@@ -12,23 +12,72 @@ from einops import rearrange
 from flowformer.encoders import twins_svt_large_context, twins_svt_large
 # from ...position_encoding import PositionEncodingSine, LinearPositionEncoding
 # from .twins import PosConv
-from flowformer.encoder import MemoryEncoder
+# from flowformer.encoder import MemoryEncoder
 # from .decoder import MemoryDecoder
 from flowformer.cnn import BasicEncoder
 import torch.nn.functional as F
-
-class FlowFormer_VO(nn.Module):
-    def __init__(self, cfg, regression_mode=2):
-        super(FlowFormer_VO, self).__init__()
+# new MemoryEncoder for extractor_vo
+class MemoryEncoder(nn.Module):
+    def __init__(self, cfg):
+        super(MemoryEncoder, self).__init__()
         self.cfg = cfg
-        self.regression_mode = regression_mode
+
+        if cfg.fnet == 'twins':
+            self.feat_encoder = twins_svt_large(pretrained=self.cfg.pretrain)
+        elif cfg.fnet == 'basicencoder':
+            self.feat_encoder = BasicEncoder(output_dim=256, norm_fn='instance')
+        else:
+            exit()
+        self.channel_convertor = nn.Conv2d(cfg.encoder_latent_dim, cfg.encoder_latent_dim, 1, padding=0, bias=False)
+
+        # The output networks
+        self.rnn_drop_out = nn.Dropout(0.2)
+        # self.out_dim = cfg.cost_latent_token_num * cfg.cost_latent_dim * cfg.image_size[0]/8 * cfg.image_size[1]/8
+
+    def corr(self, fmap1, fmap2): # fmap1 = source && fmap2 = target
+
+        batch, dim, ht, wd = fmap1.shape
+        fmap1 = rearrange(fmap1, 'b (heads d) h w -> b heads (h w) d', heads=self.cfg.cost_heads_num)# heads=1
+        fmap2 = rearrange(fmap2, 'b (heads d) h w -> b heads (h w) d', heads=self.cfg.cost_heads_num)
+        corr = einsum('bhid, bhjd -> bhij', fmap1, fmap2)
+        corr = corr.permute(0, 2, 1, 3).view(batch*ht*wd, self.cfg.cost_heads_num, ht, wd)
+        #corr = self.norm(self.relu(corr))
+        corr = corr.view(batch, ht*wd, self.cfg.cost_heads_num, ht*wd).permute(0, 2, 1, 3)
+        corr = corr.view(batch, self.cfg.cost_heads_num, ht, wd, ht, wd)
+
+        return corr # [b,head,h,w,h,w]
+
+    def forward(self, img1, img2, data, context=None):
+        # The original implementation
+        # feat_s = self.feat_encoder(img1)
+        # feat_t = self.feat_encoder(img2)
+        # feat_s = self.channel_convertor(feat_s)
+        # feat_t = self.channel_convertor(feat_t)
+
+        imgs = torch.cat([img1, img2], dim=0)
+        feats = self.feat_encoder(imgs) # 与context feature 提取方式一样
+        feats = self.channel_convertor(feats)
+        B = feats.shape[0] // 2
+
+        feat_s = feats[:B]
+        feat_t = feats[B:]
+
+        B, C, H, W = feat_s.shape
+        size = (H, W)
+
+        cost_volume = self.corr(feat_s, feat_t)
+        
+        return cost_volume, B, C, H, W
+
+# flowformer transformer feature extractor
+class FlowFormer_Extractor_VO(nn.Module):
+    def __init__(self, cfg, regression_mode=2):
+        super(FlowFormer_Extractor_VO, self).__init__()
+        self.cfg = cfg
         self.memory_encoder = MemoryEncoder(cfg)
-        # self.memory_decoder = MemoryDecoder(cfg)
-        if cfg.cnet == 'twins':
-            self.context_encoder = twins_svt_large(pretrained=self.cfg.pretrain)
-        elif cfg.cnet == 'basicencoder':
-            self.context_encoder = BasicEncoder(output_dim=256, norm_fn='instance')
+
         # regress pose
+        self.regression_mode = regression_mode
         # 1
         self.out_dim = cfg.cost_latent_token_num * cfg.cost_latent_dim
         if self.regression_mode == 1:
@@ -39,9 +88,9 @@ class FlowFormer_VO(nn.Module):
                 # nn.LeakyReLU(0.1, inplace=True),
                 nn.Linear(128, 6),
                 )
-        # 2
+        # 2 跟之前的regressor稍微有点区别，input[b,h,w,h,w]->reshape [b,h,w,-1]
         if self.regression_mode == 2:
-            self.out_dim = cfg.cost_latent_token_num * cfg.cost_latent_dim
+            self.out_dim = cfg.image_size[0]*cfg.image_size[1]/64
             self.regressor_1 = nn.Sequential(
                 nn.Linear(int(self.out_dim), 128),
                 nn.LeakyReLU(0.1, inplace=True),
@@ -75,16 +124,7 @@ class FlowFormer_VO(nn.Module):
         image2 = 2 * (image2 / 255.0) - 1.0
 
         data = {}
-
-        if self.cfg.context_concat:
-            context = self.context_encoder(torch.cat([image1, image2], dim=1))
-        else:
-            context = self.context_encoder(image1)# transformer提context feature
-            
-        cost_memory, B, C, H, W = self.memory_encoder(image1, image2, data, context)
-
-        # flow_predictions = self.memory_decoder(cost_memory, context, data, flow_init=flow_init)
-        # return flow_predictions
+        cost_memory, B, C, H, W = self.memory_encoder(image1, image2, data, None)
 
         # regress pose
         # 1. 旧做法

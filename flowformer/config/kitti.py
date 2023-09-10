@@ -35,6 +35,7 @@ _CN.latentcostformer.image_size = [216, 480] # 自己添加
 # encoder
 _CN.latentcostformer.pretrain = True
 _CN.latentcostformer.context_concat = False
+# _CN.latentcostformer.encoder_depth = 3
 _CN.latentcostformer.encoder_depth = 3
 _CN.latentcostformer.feat_cross_attn = False
 _CN.latentcostformer.vertical_encoder_attn = "twins"
