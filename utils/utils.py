@@ -569,8 +569,8 @@ class Encoder_VO_C(nn.Module):
         self.conv6_1 = conv(self.batchNorm,1024, 1024)
 
     def forward(self, x):
-        x1 = x[:,0:3,:,:]
-        x2 = x[:,3::,:,:]
+        x1 = x[:,:3,:,:]
+        x2 = x[:,3:,:,:]
 
         out_conv1a = self.conv1(x1)
         out_conv2a = self.conv2(out_conv1a)
@@ -627,10 +627,12 @@ class Pose_RNN_VO(nn.Module):
         
         # Select between fv and fv_alter
         fused = fv
-        
+        # 这是原本的svio_vo
         out, hc = self.rnn(fused) if prev is None else self.rnn(fused, prev)
         out = self.rnn_drop_out(out)
         pose = self.regressor(out)
+
+        # 将其改为MLP的形式
 
         hc = (hc[0].transpose(1, 0).contiguous(), hc[1].transpose(1, 0).contiguous())
         return pose, hc

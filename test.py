@@ -10,12 +10,16 @@ from collections import defaultdict
 from utils.kitti_eval import KITTI_tester
 import numpy as np
 import math
-from vo_transformer import VisualOdometryTransformerActEmbed
+from model import DeepVIO, Encoder_CAM, SVIO_VO, SVIO_VO_C
+# from PWCnet_vo import pwcnet_vo
+# from vo_transformer import VisualOdometryTransformerActEmbed
 from flowformer_model import FlowFormer_VO
 from flowformer_extractor_model import FlowFormer_Extractor_VO
 from flowformer_extractor_nocorr_model import FlowFormer_Extractor_nocorr_VO
 from flowformer_vio import FlowFormer_VIO
 from flowformer_vio_lstm import FlowFormer_VIO_LSTM
+from flowformer_vo_unsupervised import FlowFormer_VO_Unsupervised
+# from svio_vo_corr import svio_vo_corr
 
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument('--data_dir', type=str, default='./data', help='path to the dataset')
@@ -24,7 +28,7 @@ parser.add_argument('--save_dir', type=str, default='/disk1/ljf/VO-Transformer/r
 parser.add_argument('--seq_len', type=int, default=11, help='sequence length for LSTM')
 
 parser.add_argument('--train_seq', type=list, default=['00', '01', '02', '04', '06', '08', '09'], help='sequences for training')
-parser.add_argument('--val_seq', type=list, default=['02', '04', '05', '12'], help='sequences for validation')
+parser.add_argument('--val_seq', type=list, default=['05'], help='sequences for validation')
 parser.add_argument('--seed', type=int, default=0, help='random seed')
 
 parser.add_argument('--img_w', type=int, default=512, help='image width')
@@ -99,11 +103,23 @@ def main():
         from flowformer.config.kitti import get_cfg
         cfg = get_cfg()
         model = FlowFormer_VIO(cfg['latentcostformer'], regression_mode=args.regression_mode)
+    elif args.model_type == 'flowformer_vo_unsupervised':
+        from flowformer.config.kitti import get_cfg
+        cfg = get_cfg()
+        cfg['latentcostformer'].dropout=0.
+        cfg['latentcostformer'].attn_drop=0.
+        cfg['latentcostformer'].proj_drop=0.
+        model = FlowFormer_VO_Unsupervised(cfg['latentcostformer'], args, regression_mode=args.regression_mode)
     elif args.model_type == 'flowformer_vio_lstm':
         from flowformer.config.kitti import get_cfg
         cfg = get_cfg()
         model = FlowFormer_VIO_LSTM(cfg['latentcostformer'], regression_mode=args.regression_mode)
-    
+    elif args.model_type == 'svio_vo':
+        model = SVIO_VO(args)
+    elif args.model_type == 'svio_vo_corr':
+        model = svio_vo_corr(args)
+    elif args.model_type == "pwcnet_vo":
+        model = pwcnet_vo(args)
     weights = torch.load(args.model)
     new_state_dict = {k.replace('module.', ''): v for k, v in weights.items()}
     model.load_state_dict(new_state_dict, strict=True)

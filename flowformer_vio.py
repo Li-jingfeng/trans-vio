@@ -129,5 +129,5 @@ class FlowFormer_VIO(nn.Module):
         # concat visual_feat and imu_feat, predict pose
         all_feat = torch.cat([visual_feat, imu_feat], dim=-1)
         pose = self.pose_regressor(all_feat)
-        return pose.unsqueeze(1)
+        return pose.unsqueeze(1), all_feat
         # return cost_memory

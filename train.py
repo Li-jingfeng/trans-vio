@@ -24,6 +24,8 @@ from FlowFormer_VO_part_corr_model import FlowFormer_VO_part_corr
 from flowformer_vio import FlowFormer_VIO
 from flowformer_vio_lstm import FlowFormer_VIO_LSTM
 from gmflow.gmflow import GMFlow_VO
+from svio_vo_corr import svio_vo_corr
+from PWCnet_vo import pwcnet_vo
 EPSILON = 1e-8
 
 # from accelerate import Acceleraton
@@ -39,7 +41,7 @@ parser.add_argument('--gpu_ids', type=str, default='0,1', help='gpu ids: e.g. 0 
 parser.add_argument('--save_dir', type=str, default='/disk1/ljf/VO-Transformer/results', help='path to save the result')
 
 parser.add_argument('--train_seq', type=list, default=['00', '01', '02', '04', '06', '08', '09'], help='sequences for training')
-parser.add_argument('--val_seq', type=list, default=['05', '07', '10', '12', '01', '02', '04'], help='sequences for validation')
+parser.add_argument('--val_seq', type=list, default=['05', '07', '10', '01', '02', '04'], help='sequences for validation')
 parser.add_argument('--seed', type=int, default=0, help='random seed')
 
 parser.add_argument('--img_w', type=int, default=512, help='image width')
@@ -81,13 +83,16 @@ parser.add_argument('--weighted', default=False, action='store_true', help='whet
 parser.add_argument('--patch_size', type=int, default=16, help='patch token size')
 parser.add_argument('--T', type=int, default=2, help='time transformer T=2')
 parser.add_argument('--is_pretrained_mmae', type=bool, default=True, help='mmae backbone is_pretrained')
-parser.add_argument('--model_type',type=str, default='cvpr', help='model type:[cvpr,deepvio,tscam]')
+parser.add_argument('--model_type', type=str, default='cvpr', help='model type:[cvpr,deepvio,tscam]')
+parser.add_argument('--student_model_type', type=str, default='flowformer_vio', help='model type:[cvpr,deepvio,tscam]')
+# student_model_type仅仅是为了wandb比较指标
 parser.add_argument('--use_cnn',default=False, action='store_true', help='use flownet get cls_token')
 parser.add_argument('--use_imu',default=False, action='store_true', help='use imu_encoder as cls_token')
 # eccv2022 flowformer
 parser.add_argument('--stage', type=str, default="kitti", help="determines which dataset to use for training") 
 parser.add_argument('--regression_mode', type=int, default=2, help="determines which regress_mode to use for flowformer_vo") 
 parser.add_argument('--add_part_weight', default=False, action='store_true', help="有此参数为true,是否加载flowformer部分权重文件") 
+parser.add_argument('--kd_weight', default=0.1, type=float)
 
 # 2022 GMFlow
 parser.add_argument('--gmflow_feature_channels', default=128, type=int)
@@ -134,6 +139,7 @@ if args.experiment_name != 'debug':
         "use_cnn": args.use_cnn,
         "stage": args.stage,
         "regression_mode": args.regression_mode,
+        "kd_weight": args.kd_weight,
         "add_part_weight": args.add_part_weight,
         "gmflow_feature_channels": args.gmflow_feature_channels,
         "gmflow_num_scales": args.gmflow_num_scales,
@@ -288,12 +294,13 @@ def train(model, optimizer, train_loader, selection, temp, logger, ep, iter, p=0
     penalties = []
     data_len = len(train_loader)
 
-    for i, (imgs, imus, gts, rot, weight) in enumerate(train_loader):
+    for i, (imgs, imus, gts, rot, weight, intric) in enumerate(train_loader):
 
         imgs = imgs.cuda().float()# [b,s,c,h,w]
         imus = imus.cuda().float()# [b,101,6]
         gts = gts.cuda().float() 
         weight = weight.cuda().float()
+        intric = intric.cuda().float()
         # print('------------------',gts.type(),'-------------------')
         gts = gts.float()
         optimizer.zero_grad()
@@ -304,7 +311,7 @@ def train(model, optimizer, train_loader, selection, temp, logger, ep, iter, p=0
         device = imgs.device
         decisions = torch.zeros(batch_size, seq_len, 2).to(device)
         probs = torch.zeros(batch_size, seq_len, 2).to(device)
-        if model_type != 'deepvio' and model_type != "svio_vo" and model_type != "flowformer_vo" and model_type != "gmflow_vo" and model_type != "flowformer_vio" and model_type != "flowformer_vio_lstm" and model_type != "flowformer_extractor_vo" and model_type != "flowformer_extractor_nocorr_vo" and model_type != "flowformer_vo_part_corr":
+        if model_type != 'deepvio' and model_type != "svio_vo" and model_type != "flowformer_vo" and model_type != "gmflow_vo" and model_type != "flowformer_vio" and model_type != "flowformer_vio_lstm" and model_type != "flowformer_extractor_vo" and model_type != "flowformer_extractor_nocorr_vo" and model_type != "flowformer_vo_part_corr" and model_type != "svio_vo_corr" and model_type != "pwcnet_vo":
             poses, pose_backward = [], []
             two_imgs_forward = torch.cat((imgs[:, :-1], imgs[:, 1:]), dim=2)
             two_imgs_backward = torch.cat((imgs[:, 1:], imgs[:, :-1]), dim=2)#额外添加
@@ -327,6 +334,10 @@ def train(model, optimizer, train_loader, selection, temp, logger, ep, iter, p=0
             poses, _ = model(imgs,imus,hc=None)
         elif model_type == "deepvio" or model_type == "svio_vo":
             poses = model(imgs)
+        elif model_type == "svio_vo_corr":
+            poses = model(imgs)
+        elif model_type == "pwcnet_vo":
+            poses = model(imgs)
         elif model_type == "flowformer_vo":
             img0 = imgs[:, 0]
             img1 = imgs[:, 1]
@@ -347,13 +358,13 @@ def train(model, optimizer, train_loader, selection, temp, logger, ep, iter, p=0
             img0 = imgs[:, 0]
             img1 = imgs[:, 1]
             imus = imus.unsqueeze(1)# 对于只估计两帧直接的变换来说，给imus添加seq维度
-            poses = model(img0,img1,imus)
+            poses, _ = model(img0,img1,imus)
         elif model_type == "gmflow_vo":
             poses = model(imgs[:,0],imgs[:,1],attn_splits_list=args.attn_splits_list,corr_radius_list=args.corr_radius_list,prop_radius_list=args.prop_radius_list)
 
         # wandb.log delta_x,delta_y,delta_yaw
-        if rank == 0 and args.experiment_name != "debug":
-            compute_loss(gts, pred_poses=poses, iter=iter, epoch=ep, rank=rank, name="train")
+        # if rank == 0 and args.experiment_name != "debug":
+        #     compute_loss(gts, pred_poses=poses, iter=iter, epoch=ep, rank=rank, name="train")
         # pose_backward = pose_backward.permute(1,0,2)#额外添加
         if not weighted:
             angle_loss = torch.nn.functional.mse_loss(poses[:,:,:3], gts[:, :, :3])
@@ -382,11 +393,11 @@ def train(model, optimizer, train_loader, selection, temp, logger, ep, iter, p=0
         iter = iter + 1
         if i % args.print_frequency == 0: 
             # message = f'Epoch: {ep}, iters: {i}/{data_len}, iter: {iter}/{data_len}, pose loss: {pose_loss.item():.6f}, penalty: {penalty.item():.6f}, loss: {loss.item():.6f}, geo_inverse_loss: {geo_inverse_loss.item():.6f}, abs_diff_geo_inverse_rot: {abs_diff_geo_inverse_rot.item():.6f}, abs_diff_geo_inverse_pos_x: {abs_diff_geo_inverse_pos[0].item():.6f}, abs_diff_geo_inverse_pos_y: {abs_diff_geo_inverse_pos[1].item():.6f}, abs_diff_geo_inverse_pos_z: {abs_diff_geo_inverse_pos[2].item():.6f}'
-            message = f'Epoch: {ep}, iters: {i}/{data_len}, iter: {iter}/{data_len}, pose loss: {pose_loss.item():.6f}, penalty: {penalty.item():.6f}, loss: {loss.item():.6f}'
+            message = f'Epoch: {ep}, iters: {i}/{data_len}, iter: {iter}/{data_len}, student pose loss: {pose_loss.item():.6f}, penalty: {penalty.item():.6f}, loss: {loss.item():.6f}'
             print(message)
             if args.experiment_name != 'debug':
                 # wandb.log({"Epoch": ep, "iters": i, "iter": iter, "pose loss": pose_loss.item(),"penalty": penalty, "angle loss": angle_loss.item(), "translation loss": translation_loss.item(), "loss": loss.item(), "geo_inverse_loss": geo_inverse_loss.item(), "abs_diff_geo_inverse_rot": abs_diff_geo_inverse_rot.item(), "abs_diff_geo_inverse_pos_x": abs_diff_geo_inverse_pos[0].item(), "abs_diff_geo_inverse_pos_y": abs_diff_geo_inverse_pos[1].item(), "abs_diff_geo_inverse_pos_z": abs_diff_geo_inverse_pos[2].item()})
-                wandb.log({"Epoch": ep, "iters": i, "iter": iter, "pose loss": pose_loss.item(),"penalty": penalty, "angle loss": angle_loss.item(), "translation loss": translation_loss.item(), "loss": loss.item()})
+                wandb.log({"Epoch": ep, "iters": i, "iter": iter, "student pose loss": pose_loss.item(),"penalty": penalty, "student angle loss": angle_loss.item(), "student translation loss": translation_loss.item(), "loss": loss.item()})
             logger.info(message)
 
         mse_losses.append(pose_loss.item())
@@ -463,8 +474,14 @@ def main():
         model = Encoder_CAM(args)
     elif args.model_type == 'svio_vo':
         model = SVIO_VO(args)
+    # 这个是官方的，但是有cuda的错误
     elif args.model_type == 'flownet_C':
         model = SVIO_VO_C(args)
+    # 这个还有点问题，而且不是官方的
+    elif args.model_type == 'svio_vo_corr':
+        model = svio_vo_corr(args)
+    elif args.model_type == 'pwcnet_vo':
+        model = pwcnet_vo(args)
     elif args.model_type == 'flowformer_vo':
         if args.stage == 'kitti':
             from flowformer.config.kitti import get_cfg
@@ -540,6 +557,9 @@ def main():
         state_dict = {k.replace("module.", "") if "module." in k else k: v for k, v in state_dict.items()}
 
         if args.model_type == "flowformer_vo":
+            model.load_state_dict(state_dict,strict=False)
+        # 这里加载flownetC的权重
+        elif args.model_type == "svio_vo_corr":
             model.load_state_dict(state_dict,strict=False)
         elif args.model_type == "flowformer_extractor_vo":
             model.load_state_dict(state_dict,strict=False)
@@ -642,12 +662,20 @@ def main():
 
     # Use the pre-trained flownet or not
     if args.pretrain_flownet and args.pretrain is None:
-        pretrained_w = torch.load(args.pretrain_flownet, map_location='cpu')
-        model_dict = model.Feature_net.state_dict()
-        update_dict = {k: v for k, v in pretrained_w['state_dict'].items() if k in model_dict}
-        #当use_cnn=true时，visual_head不会被加载权重
-        model_dict.update(update_dict)
-        model.Feature_net.load_state_dict(model_dict)
+        if args.model_type == 'pwcnet_vo':
+            pretrained_w = torch.load(args.pretrain_flownet, map_location='cpu')
+            model_dict = model.Feature_net.state_dict()
+            new_pretrained_w = {k.replace("module.", "") if "module." in k else k: v for k, v in pretrained_w.items()}
+            update_dict = {k: v for k, v in new_pretrained_w.items() if k in model_dict}
+            model_dict.update(update_dict)
+            model.Feature_net.load_state_dict(model_dict)
+        else:
+            pretrained_w = torch.load(args.pretrain_flownet, map_location='cpu')
+            model_dict = model.Feature_net.state_dict()
+            update_dict = {k: v for k, v in pretrained_w['state_dict'].items() if k in model_dict}
+            #当use_cnn=true时，visual_head不会被加载权重
+            model_dict.update(update_dict)
+            model.Feature_net.load_state_dict(model_dict)
 
     # Initialize the optimizer
     if args.optimizer == 'SGD':
@@ -684,7 +712,7 @@ def main():
 
         # Save the model after training
         # if rank==0:
-        if(os.path.isfile(f'{checkpoints_dir}/{(ep-1):003}.pth') and ep%10!=1):
+        if(os.path.isfile(f'{checkpoints_dir}/{(ep-1):003}.pth')):# and ep%10!=1
             os.remove(f'{checkpoints_dir}/{(ep-1):003}.pth')
         torch.save(model.state_dict(), f'{checkpoints_dir}/{ep:003}.pth')
         # dist.barrier()
@@ -703,17 +731,23 @@ def main():
                 model.eval()
                 errors = tester.eval(model, selection='gumbel-softmax', num_gpu=len(gpu_ids))
         
-            t_rel = np.mean([errors[i]['t_rel'] for i in range(len(errors))])
-            r_rel = np.mean([errors[i]['r_rel'] for i in range(len(errors))])
-            t_rmse = np.mean([errors[i]['t_rmse'] for i in range(len(errors))])
-            r_rmse = np.mean([errors[i]['r_rmse'] for i in range(len(errors))])
-            usage = np.mean([errors[i]['usage'] for i in range(len(errors))])
+            t_rel = np.mean([errors[i]['t_rel'] for i in range(3)])
+            r_rel = np.mean([errors[i]['r_rel'] for i in range(3)])
+            t_rmse = np.mean([errors[i]['t_rmse'] for i in range(3)])
+            r_rmse = np.mean([errors[i]['r_rmse'] for i in range(3)])
+            usage = np.mean([errors[i]['usage'] for i in range(3)])
 
             if t_rel < best:
                 best = t_rel 
                 if best < 10:
                     torch.save(model.state_dict(), f'{checkpoints_dir}/best_{best:.2f}.pth')
 
+            message = f'Epoch {ep} evaluation finished , Test_Average_t_rel: {t_rel:.4f}, Test_Average_r_rel: {r_rel:.4f}, Test_Average_t_rmse: {t_rmse:.4f}, Test_Average_r_rmse: {r_rmse:.4f}, Test_Average_usage: {usage:.4f}, Test_Average_best t_rel: {best:.4f}'
+            logger.info(message)
+            print(message)
+            if args.experiment_name != 'debug':
+                wandb.log({"Epoch": ep, "iter":iter, "Test_Average_t_rel": round(t_rel, 4), "Test_Average_r_rel": round(r_rel, 4), "Test_Average_t_rmse": round(t_rmse, 4), "Test_Average_r_rmse": round(r_rmse, 4), "Test_Average_usage": round(usage, 4), "Test_Average_best t_rel": round(best, 4)})
+            
             message = "Epoch {} iter {} evaluation Seq. 05 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, iter, round(errors[0]['t_rel'], 4), round(errors[0]['r_rel'], 4), round(errors[0]['t_rmse'], 4), round(errors[0]['r_rmse'], 4))
             logger.info(message)
             print(message)
@@ -732,29 +766,23 @@ def main():
             if args.experiment_name != 'debug':
                 wandb.log({"Epoch": ep, "iter":iter, "10. t_rel": round(errors[2]['t_rel'], 4), "10. r_rel": round(errors[2]['r_rel'], 4), "10. t_rmse": round(errors[2]['t_rmse'], 4), "10. r_rmse": round(errors[2]['r_rmse'], 4)})
             
-            message = "Epoch {} iter {} evaluation Seq. 12——line , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, iter, round(errors[3]['t_rel'], 4), round(errors[3]['r_rel'], 4), round(errors[3]['t_rmse'], 4), round(errors[3]['r_rmse'], 4))
+            message = "Epoch {} iter {} evaluation Seq. 01 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, iter, round(errors[3]['t_rel'], 4), round(errors[3]['r_rel'], 4), round(errors[3]['t_rmse'], 4), round(errors[3]['r_rmse'], 4))
             logger.info(message)
             print(message)
             if args.experiment_name != 'debug':
-                wandb.log({"Epoch": ep, "iter":iter, "12. t_rel": round(errors[3]['t_rel'], 4), "12. r_rel": round(errors[3]['r_rel'], 4), "12. t_rmse": round(errors[3]['t_rmse'], 4), "12. r_rmse": round(errors[3]['r_rmse'], 4)})
+                wandb.log({"Epoch": ep, "iter":iter, "01. t_rel": round(errors[3]['t_rel'], 4), "01. r_rel": round(errors[3]['r_rel'], 4), "01. t_rmse": round(errors[3]['t_rmse'], 4), "01. r_rmse": round(errors[3]['r_rmse'], 4)})
             
-            message = "Epoch {} iter {} evaluation Seq. 01 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, iter, round(errors[4]['t_rel'], 4), round(errors[4]['r_rel'], 4), round(errors[4]['t_rmse'], 4), round(errors[4]['r_rmse'], 4))
+            message = "Epoch {} iter {} evaluation Seq. 02 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, iter, round(errors[4]['t_rel'], 4), round(errors[4]['r_rel'], 4), round(errors[4]['t_rmse'], 4), round(errors[4]['r_rmse'], 4))
             logger.info(message)
             print(message)
             if args.experiment_name != 'debug':
-                wandb.log({"Epoch": ep, "iter":iter, "01. t_rel": round(errors[4]['t_rel'], 4), "01. r_rel": round(errors[4]['r_rel'], 4), "01. t_rmse": round(errors[4]['t_rmse'], 4), "01. r_rmse": round(errors[4]['r_rmse'], 4)})
+                wandb.log({"Epoch": ep, "iter":iter, "02. t_rel": round(errors[4]['t_rel'], 4), "02. r_rel": round(errors[4]['r_rel'], 4), "02. t_rmse": round(errors[4]['t_rmse'], 4), "02. r_rmse": round(errors[4]['r_rmse'], 4)})
             
-            message = "Epoch {} iter {} evaluation Seq. 02 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, iter, round(errors[5]['t_rel'], 4), round(errors[5]['r_rel'], 4), round(errors[5]['t_rmse'], 4), round(errors[5]['r_rmse'], 4))
+            message = "Epoch {} iter {} evaluation Seq. 04 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, iter, round(errors[5]['t_rel'], 4), round(errors[5]['r_rel'], 4), round(errors[5]['t_rmse'], 4), round(errors[5]['r_rmse'], 4))
             logger.info(message)
             print(message)
             if args.experiment_name != 'debug':
-                wandb.log({"Epoch": ep, "iter":iter, "02. t_rel": round(errors[5]['t_rel'], 4), "02. r_rel": round(errors[5]['r_rel'], 4), "02. t_rmse": round(errors[5]['t_rmse'], 4), "02. r_rmse": round(errors[5]['r_rmse'], 4)})
-            
-            message = "Epoch {} iter {} evaluation Seq. 04 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, iter, round(errors[6]['t_rel'], 4), round(errors[6]['r_rel'], 4), round(errors[6]['t_rmse'], 4), round(errors[6]['r_rmse'], 4))
-            logger.info(message)
-            print(message)
-            if args.experiment_name != 'debug':
-                wandb.log({"Epoch": ep, "iter":iter, "04. t_rel": round(errors[6]['t_rel'], 4), "04. r_rel": round(errors[6]['r_rel'], 4), "04. t_rmse": round(errors[6]['t_rmse'], 4), "04. r_rmse": round(errors[6]['r_rmse'], 4)})
+                wandb.log({"Epoch": ep, "iter":iter, "04. t_rel": round(errors[5]['t_rel'], 4), "04. r_rel": round(errors[5]['r_rel'], 4), "04. t_rmse": round(errors[5]['t_rmse'], 4), "04. r_rmse": round(errors[5]['r_rmse'], 4)})
             
             logger.info(message)
             print(message)

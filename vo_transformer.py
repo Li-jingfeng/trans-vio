@@ -28,7 +28,7 @@ class VisualOdometryTransformerActEmbed(nn.Module):
     def __init__(
         self,
         *,
-        observation_space=["rgb"],
+        observation_space=["rgb","depth"],
         observation_strip=[],
         observation_strip_proba=1.0,
         backbone='base', # 'small', 'base'

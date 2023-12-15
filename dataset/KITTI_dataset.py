@@ -26,6 +26,7 @@ class KITTI(Dataset):
         self.sequence_length = sequence_length
         self.transform = transform
         self.train_seqs = train_seqs
+        self.intric = np.zeros((3,3))
         self.make_dataset()
     
     def make_dataset(self):
@@ -33,7 +34,15 @@ class KITTI(Dataset):
         for folder in self.train_seqs:
             poses, poses_rel = read_pose_from_text(self.root/'poses/{}.txt'.format(folder))
             imus = sio.loadmat(self.root/'imus/{}.mat'.format(folder))['imu_data_interp']
-            fpaths = sorted((self.root/'sequences/{}/image_2'.format(folder)).files("*.png"))      
+            fpaths = sorted((self.root/'sequences/{}/image_2'.format(folder)).files("*.png"))
+            # 针对每一个序列添加image_2的内参
+            intric = np.genfromtxt(f'data/sequences/{folder}/calib.txt').astype(np.float32)
+            new_intric = intric[:,1:]
+            new_intric1 = np.zeros((new_intric.shape[0],3,4))
+            for i in range(new_intric.shape[0]):
+                new_intric1[i] = new_intric[i].reshape(3,4)
+            self.intric = new_intric1[2,:,:3]
+            
             for i in range(len(fpaths)-self.sequence_length):
                 img_samples = fpaths[i:i+self.sequence_length]
                 imu_samples = imus[i*IMU_FREQ:(i+self.sequence_length-1)*IMU_FREQ+1]
@@ -71,7 +80,7 @@ class KITTI(Dataset):
         rot = sample['rot'].astype(np.float32)
         weight = self.weights[index]
 
-        return imgs, imus, gts, rot, weight
+        return imgs, imus, gts, rot, weight, self.intric
 
     def __len__(self):
         return len(self.samples)

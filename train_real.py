@@ -25,7 +25,7 @@ from flowformer_vio import FlowFormer_VIO
 from flowformer_vio_lstm import FlowFormer_VIO_LSTM
 from gmflow.gmflow import GMFlow_VO
 EPSILON = 1e-8
-# 本来的train.py是有监督的，这部分copy开启新的无监督框架
+# 本来的train.py是有监督的，这部分开始测试真实数据
 # from accelerate import Acceleraton
 # accelerator = Accelerator(split_batches=True)
 # device = accelerator.device
@@ -38,8 +38,8 @@ parser.add_argument('--data_dir', type=str, default='./data', help='path to the 
 parser.add_argument('--gpu_ids', type=str, default='0,1', help='gpu ids: e.g. 0  0,1,2, 0,2. use -1 for CPU')
 parser.add_argument('--save_dir', type=str, default='/disk1/ljf/VO-Transformer/results', help='path to save the result')
 
-parser.add_argument('--train_seq', type=list, default=['00', '01', '02', '04', '06', '08', '09'], help='sequences for training')
-parser.add_argument('--val_seq', type=list, default=['05', '07', '10', '12', '01', '02', '04'], help='sequences for validation')
+parser.add_argument('--train_seq', type=list, default=['9_10'], help='sequences for training')
+parser.add_argument('--val_seq', type=list, default=['9_10'], help='sequences for validation')
 parser.add_argument('--seed', type=int, default=0, help='random seed')
 
 parser.add_argument('--img_w', type=int, default=512, help='image width')
@@ -288,7 +288,7 @@ def train(model, optimizer, train_loader, selection, temp, logger, ep, iter, p=0
     penalties = []
     data_len = len(train_loader)
 
-    for i, (imgs, imus, gts, rot, weight) in enumerate(train_loader):
+    for i, (imgs, imus, gts, rot, weight, intric) in enumerate(train_loader):
 
         imgs = imgs.cuda().float()# [b,s,c,h,w]
         imus = imus.cuda().float()# [b,101,6]
@@ -412,7 +412,7 @@ def main():
     # setup(rank, world_size)
     # Create Dir
     # experiment_dir = Path(args.save_dir)
-    experiment_dir = Path('./new_results')
+    experiment_dir = Path('./real_data_results')
     experiment_dir.mkdir_p()
     file_dir = experiment_dir.joinpath('{}/'.format(args.experiment_name))
     file_dir.mkdir_p()
@@ -684,7 +684,7 @@ def main():
 
         # Save the model after training
         # if rank==0:
-        if(os.path.isfile(f'{checkpoints_dir}/{(ep-1):003}.pth') and ep%10!=1):
+        if(os.path.isfile(f'{checkpoints_dir}/{(ep-1):003}.pth') and ep%50!=1):
             os.remove(f'{checkpoints_dir}/{(ep-1):003}.pth')
         torch.save(model.state_dict(), f'{checkpoints_dir}/{ep:003}.pth')
         # dist.barrier()
@@ -714,47 +714,47 @@ def main():
                 if best < 10:
                     torch.save(model.state_dict(), f'{checkpoints_dir}/best_{best:.2f}.pth')
 
-            message = "Epoch {} iter {} evaluation Seq. 05 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, iter, round(errors[0]['t_rel'], 4), round(errors[0]['r_rel'], 4), round(errors[0]['t_rmse'], 4), round(errors[0]['r_rmse'], 4))
+            message = "Epoch {} iter {} evaluation Seq. 9_10 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, iter, round(errors[0]['t_rel'], 4), round(errors[0]['r_rel'], 4), round(errors[0]['t_rmse'], 4), round(errors[0]['r_rmse'], 4))
             logger.info(message)
             print(message)
             if args.experiment_name != 'debug':
-                wandb.log({"Epoch": ep, "iter":iter, "5. t_rel": round(errors[0]['t_rel'], 4), "5. r_rel": round(errors[0]['r_rel'], 4), "5. t_rmse": round(errors[0]['t_rmse'], 4), "5. r_rmse": round(errors[0]['r_rmse'], 4)})
+                wandb.log({"Epoch": ep, "iter":iter, "9_10. t_rel": round(errors[0]['t_rel'], 4), "9_10. r_rel": round(errors[0]['r_rel'], 4), "9_10. t_rmse": round(errors[0]['t_rmse'], 4), "9_10. r_rmse": round(errors[0]['r_rmse'], 4)})
 
-            message = "Epoch {} iter {} evaluation Seq. 07 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, iter, round(errors[1]['t_rel'], 4), round(errors[1]['r_rel'], 4), round(errors[1]['t_rmse'], 4), round(errors[1]['r_rmse'], 4))
-            logger.info(message)
-            print(message)
-            if args.experiment_name != 'debug':
-                wandb.log({"Epoch": ep, "iter":iter, "7. t_rel": round(errors[1]['t_rel'], 4), "7. r_rel": round(errors[1]['r_rel'], 4), "7. t_rmse": round(errors[1]['t_rmse'], 4), "7. r_rmse": round(errors[1]['r_rmse'], 4)})
+            # message = "Epoch {} iter {} evaluation Seq. 07 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, iter, round(errors[1]['t_rel'], 4), round(errors[1]['r_rel'], 4), round(errors[1]['t_rmse'], 4), round(errors[1]['r_rmse'], 4))
+            # logger.info(message)
+            # print(message)
+            # if args.experiment_name != 'debug':
+            #     wandb.log({"Epoch": ep, "iter":iter, "7. t_rel": round(errors[1]['t_rel'], 4), "7. r_rel": round(errors[1]['r_rel'], 4), "7. t_rmse": round(errors[1]['t_rmse'], 4), "7. r_rmse": round(errors[1]['r_rmse'], 4)})
 
-            message = "Epoch {} iter {} evaluation Seq. 10 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, iter, round(errors[2]['t_rel'], 4), round(errors[2]['r_rel'], 4), round(errors[2]['t_rmse'], 4), round(errors[2]['r_rmse'], 4))
-            logger.info(message)
-            print(message)
-            if args.experiment_name != 'debug':
-                wandb.log({"Epoch": ep, "iter":iter, "10. t_rel": round(errors[2]['t_rel'], 4), "10. r_rel": round(errors[2]['r_rel'], 4), "10. t_rmse": round(errors[2]['t_rmse'], 4), "10. r_rmse": round(errors[2]['r_rmse'], 4)})
+            # message = "Epoch {} iter {} evaluation Seq. 10 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, iter, round(errors[2]['t_rel'], 4), round(errors[2]['r_rel'], 4), round(errors[2]['t_rmse'], 4), round(errors[2]['r_rmse'], 4))
+            # logger.info(message)
+            # print(message)
+            # if args.experiment_name != 'debug':
+            #     wandb.log({"Epoch": ep, "iter":iter, "10. t_rel": round(errors[2]['t_rel'], 4), "10. r_rel": round(errors[2]['r_rel'], 4), "10. t_rmse": round(errors[2]['t_rmse'], 4), "10. r_rmse": round(errors[2]['r_rmse'], 4)})
             
-            message = "Epoch {} iter {} evaluation Seq. 12——line , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, iter, round(errors[3]['t_rel'], 4), round(errors[3]['r_rel'], 4), round(errors[3]['t_rmse'], 4), round(errors[3]['r_rmse'], 4))
-            logger.info(message)
-            print(message)
-            if args.experiment_name != 'debug':
-                wandb.log({"Epoch": ep, "iter":iter, "12. t_rel": round(errors[3]['t_rel'], 4), "12. r_rel": round(errors[3]['r_rel'], 4), "12. t_rmse": round(errors[3]['t_rmse'], 4), "12. r_rmse": round(errors[3]['r_rmse'], 4)})
+            # message = "Epoch {} iter {} evaluation Seq. 12——line , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, iter, round(errors[3]['t_rel'], 4), round(errors[3]['r_rel'], 4), round(errors[3]['t_rmse'], 4), round(errors[3]['r_rmse'], 4))
+            # logger.info(message)
+            # print(message)
+            # if args.experiment_name != 'debug':
+            #     wandb.log({"Epoch": ep, "iter":iter, "12. t_rel": round(errors[3]['t_rel'], 4), "12. r_rel": round(errors[3]['r_rel'], 4), "12. t_rmse": round(errors[3]['t_rmse'], 4), "12. r_rmse": round(errors[3]['r_rmse'], 4)})
             
-            message = "Epoch {} iter {} evaluation Seq. 01 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, iter, round(errors[4]['t_rel'], 4), round(errors[4]['r_rel'], 4), round(errors[4]['t_rmse'], 4), round(errors[4]['r_rmse'], 4))
-            logger.info(message)
-            print(message)
-            if args.experiment_name != 'debug':
-                wandb.log({"Epoch": ep, "iter":iter, "01. t_rel": round(errors[4]['t_rel'], 4), "01. r_rel": round(errors[4]['r_rel'], 4), "01. t_rmse": round(errors[4]['t_rmse'], 4), "01. r_rmse": round(errors[4]['r_rmse'], 4)})
+            # message = "Epoch {} iter {} evaluation Seq. 01 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, iter, round(errors[4]['t_rel'], 4), round(errors[4]['r_rel'], 4), round(errors[4]['t_rmse'], 4), round(errors[4]['r_rmse'], 4))
+            # logger.info(message)
+            # print(message)
+            # if args.experiment_name != 'debug':
+            #     wandb.log({"Epoch": ep, "iter":iter, "01. t_rel": round(errors[4]['t_rel'], 4), "01. r_rel": round(errors[4]['r_rel'], 4), "01. t_rmse": round(errors[4]['t_rmse'], 4), "01. r_rmse": round(errors[4]['r_rmse'], 4)})
             
-            message = "Epoch {} iter {} evaluation Seq. 02 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, iter, round(errors[5]['t_rel'], 4), round(errors[5]['r_rel'], 4), round(errors[5]['t_rmse'], 4), round(errors[5]['r_rmse'], 4))
-            logger.info(message)
-            print(message)
-            if args.experiment_name != 'debug':
-                wandb.log({"Epoch": ep, "iter":iter, "02. t_rel": round(errors[5]['t_rel'], 4), "02. r_rel": round(errors[5]['r_rel'], 4), "02. t_rmse": round(errors[5]['t_rmse'], 4), "02. r_rmse": round(errors[5]['r_rmse'], 4)})
+            # message = "Epoch {} iter {} evaluation Seq. 02 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, iter, round(errors[5]['t_rel'], 4), round(errors[5]['r_rel'], 4), round(errors[5]['t_rmse'], 4), round(errors[5]['r_rmse'], 4))
+            # logger.info(message)
+            # print(message)
+            # if args.experiment_name != 'debug':
+            #     wandb.log({"Epoch": ep, "iter":iter, "02. t_rel": round(errors[5]['t_rel'], 4), "02. r_rel": round(errors[5]['r_rel'], 4), "02. t_rmse": round(errors[5]['t_rmse'], 4), "02. r_rmse": round(errors[5]['r_rmse'], 4)})
             
-            message = "Epoch {} iter {} evaluation Seq. 04 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, iter, round(errors[6]['t_rel'], 4), round(errors[6]['r_rel'], 4), round(errors[6]['t_rmse'], 4), round(errors[6]['r_rmse'], 4))
-            logger.info(message)
-            print(message)
-            if args.experiment_name != 'debug':
-                wandb.log({"Epoch": ep, "iter":iter, "04. t_rel": round(errors[6]['t_rel'], 4), "04. r_rel": round(errors[6]['r_rel'], 4), "04. t_rmse": round(errors[6]['t_rmse'], 4), "04. r_rmse": round(errors[6]['r_rmse'], 4)})
+            # message = "Epoch {} iter {} evaluation Seq. 04 , t_rel: {}, r_rel: {}, t_rmse: {}, r_rmse: {}" .format(ep, iter, round(errors[6]['t_rel'], 4), round(errors[6]['r_rel'], 4), round(errors[6]['t_rmse'], 4), round(errors[6]['r_rmse'], 4))
+            # logger.info(message)
+            # print(message)
+            # if args.experiment_name != 'debug':
+            #     wandb.log({"Epoch": ep, "iter":iter, "04. t_rel": round(errors[6]['t_rel'], 4), "04. r_rel": round(errors[6]['r_rel'], 4), "04. t_rmse": round(errors[6]['t_rmse'], 4), "04. r_rmse": round(errors[6]['r_rmse'], 4)})
             
             logger.info(message)
             print(message)

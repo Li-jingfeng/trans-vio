@@ -97,3 +97,46 @@ CUDA_VISIBLE_DEVICES="3" python train.py --model_type flowformer_vo_part_corr --
 CUDA_VISIBLE_DEVICES="2" python train.py --model_type flowformer_vo_part_corr --regression_mode 2 --gpu_ids 0 --batch_size 48 --data_dir ./data --experiment_name flowformer_vo_regress_mode_2_update_all_stride6 --seq_len 2 --workers 16 --patch_size 16 --epochs_warmup 20 --epochs_joint 80 --epochs_fine 40 --img_w 480 --img_h 216 --stage kitti --pretrain ./model_zoo/flowformer_kitti.pth
 
 # sparse attention 
+# 2023/9/12
+# 使用flownet的correlation版本，但是这里的corr是通过卷积做的，所以先试一下原本的，接下来再做一个目前点乘的办法，但是这里除了原本的corr还加了一个别的feature
+CUDA_VISIBLE_DEVICES="3" python train.py --model_type svio_vo_corr --gpu_ids 0 --batch_size 48 --data_dir ./data --experiment_name svio_vo_corr_conv --seq_len 2 --workers 16 --patch_size 16 --epochs_warmup 20 --epochs_joint 80 --epochs_fine 40 --img_w 480 --img_h 216 --stage kitti --pretrain_flownet ./model_zoo/flownetc_EPE1.766.tar --img_w 480 --img_h 256
+# 仅仅使用corr feature
+python train.py --model_type svio_vo_corr --gpu_ids 2 --batch_size 48 --data_dir ./data --experiment_name svio_vo_corr_conv_only_corr --seq_len 2 --workers 16 --patch_size 16 --epochs_warmup 20 --epochs_joint 80 --epochs_fine 40 --img_w 480 --img_h 216 --stage kitti --pretrain_flownet ./model_zoo/flownetc_EPE1.766.tar --img_w 480 --img_h 256
+# 使用之前的稠密corr
+python train.py --model_type svio_vo_corr --gpu_ids 0 --batch_size 48 --data_dir ./data --experiment_name svio_vo_corr_dense --seq_len 2 --workers 16 --patch_size 16 --epochs_warmup 20 --epochs_joint 80 --epochs_fine 40 --img_w 480 --img_h 216 --stage kitti --pretrain_flownet ./model_zoo/flownetc_EPE1.766.tar --img_w 480 --img_h 256
+# 之前的参数与flownet_simple设置的不一致，重新泡一下svio_vo
+python train.py --gpu_ids 0 --model_type svio_vo --batch_size 48 --data_dir ./data --experiment_name b48_svio_vo --seq_len 2 --workers 8 --patch_size 16 --epochs_warmup 20 --epochs_joint 80 --epochs_fine 40 --img_w 480 --img_h 216
+# 10/8对于flownetC进行修改，增加到decoder部分，预测出flow，仿照ICRA23 dytanvo, 很明显这里corr变好了，比起之前在cost volume就做预测
+python train.py --gpu_ids 0 --model_type svio_vo_corr --batch_size 48 --data_dir ./data --experiment_name b16_svio_vo_corr_dytanvo --seq_len 2 --workers 16 --epochs_warmup 20 --epochs_joint 80 --epochs_fine 40 --img_w 480 --img_h 256 --pretrain_flownet ./model_zoo/flownetc_EPE1.766.tar
+# true batch_size 16
+python train.py --gpu_ids 0 --model_type svio_vo_corr --batch_size 16 --data_dir ./data --experiment_name true_b16_svio_vo_corr_dytanvo --seq_len 2 --workers 16 --epochs_warmup 40 --epochs_joint 40 --epochs_fine 20 --img_w 480 --img_h 256 --pretrain_flownet ./model_zoo/flownetc_EPE1.766.tar
+# 这里出现loss特别大  等于nan  只是因为batch16？？
+python train.py --gpu_ids 0 --model_type svio_vo_corr --batch_size 48 --data_dir ./data --experiment_name batch48_test_b16 --seq_len 2 --workers 16 --epochs_warmup 40 --epochs_joint 40 --epochs_fine 20 --img_w 480 --img_h 256 --pretrain_flownet ./model_zoo/flownetc_EPE1.766.tar
+# 10/9针对dytanvo中使用的pwcnet_vo进行测试，没有mask以及内参矩阵
+python train.py --gpu_ids 3 --model_type pwcnet_vo --batch_size 48 --data_dir ./data --experiment_name b48_pwcnet_vo_dytanvo --seq_len 2 --workers 16 --epochs_warmup 20 --epochs_joint 80 --epochs_fine 40 --img_w 512 --img_h 256 --pretrain_flownet ./model_zoo/flownet.pkl
+
+# 这里使用真实数据进行flowformer_vo拟合，现在trainset和val_set都是9_10所录制的数据集，而且原始数据的xy都很大，这里使用原始的xy(比较大)
+CUDA_VISIBLE_DEVICES="3" python train_real.py --model_type flowformer_vo --regression_mode 2 --gpu_ids 0 --batch_size 48 --data_dir ./real_data --experiment_name real_data_flowformer_vo --seq_len 2 --workers 16 --patch_size 16 --epochs_warmup 20 --epochs_joint 80 --epochs_fine 40 --img_w 480 --img_h 216 --stage kitti --pretrain ./model_zoo/flowformer_kitti.pth
+# 再上一个实验的基础上，初始点xyz设为000，其他点都减去初始点的坐标
+CUDA_VISIBLE_DEVICES="2" python train_real.py --model_type flowformer_vo --regression_mode 2 --gpu_ids 0 --batch_size 48 --data_dir ./real_data --experiment_name real_data_small_flowformer_vo --seq_len 2 --workers 16 --patch_size 16 --epochs_warmup 120 --epochs_joint 480 --epochs_fine 240 --img_w 480 --img_h 216 --stage kitti --pretrain ./model_zoo/flowformer_kitti.pth
+# 与上上个实验一致，但是epoch数变多
+CUDA_VISIBLE_DEVICES="1" python train_real.py --model_type flowformer_vo --regression_mode 2 --gpu_ids 0 --batch_size 48 --data_dir ./real_data --experiment_name real_data_bigxy_flowformer_vo --seq_len 2 --workers 16 --patch_size 16 --epochs_warmup 140 --epochs_joint 560 --epochs_fine 280 --img_w 480 --img_h 216 --stage kitti --pretrain ./model_zoo/flowformer_kitti.pth
+
+
+
+#这部分进行无监督  参考UnVIO 看起来结果不太好，应该是有什么问题
+CUDA_VISIBLE_DEVICES="1" python train_unsupervised.py --model_type flowformer_vo_unsupervised --regression_mode 2 --gpu_ids 0 --batch_size 48 --data_dir ./data --experiment_name unsupervised_flowformer_vo --seq_len 5 --workers 16 --patch_size 16 --epochs_warmup 20 --epochs_joint 80 --epochs_fine 40 --img_w 480 --img_h 256 --stage kitti --pretrain ./model_zoo/flowformer_kitti.pth
+
+# 加入蒸馏
+CUDA_VISIBLE_DEVICES="3" python train_kd.py --batch_size 16 --data_dir ./data --experiment_name flowformervio_kd --seq_len 2 --workers 8 --teacher_model_type deepvio --student_model_type flowformer_vio --pretrain ./model_zoo/flowformer_kitti.pth --img_w 480 --img_h 216 --stage kitti --regression_mode 2 --gpu_ids 0
+# 修改蒸馏loss lambda
+CUDA_VISIBLE_DEVICES="0" python train_kd.py --batch_size 16 --data_dir ./data --kd_weight 1 --experiment_name flowformervio_kd_weight=1 --seq_len 2 --workers 8 --teacher_model_type deepvio --student_model_type flowformer_vio --pretrain ./model_zoo/flowformer_kitti.pth --img_w 480 --img_h 216 --stage kitti --regression_mode 2 --gpu_ids 0
+# 重新测一下flowformervio --add_part_weight True这个参数先不需要   --epochs_warmup 20 --epochs_joint 80 --epochs_fine 40这个参数暂时也跟上一个保持一致，因为
+# 但是感觉这样不能收敛，因为warmup==40 但是这个可以与带有蒸馏的前两个实验进行对照
+CUDA_VISIBLE_DEVICES="1" python train.py --model_type flowformer_vio --regression_mode 2 --gpu_ids 0 --batch_size 16 --data_dir ./data --experiment_name original_flowformer_vio_regress_mode_2 --seq_len 2 --workers 16 --patch_size 16 --img_w 480 --img_h 216 --stage kitti --pretrain ./model_zoo/flowformer_kitti.pth
+# 改成可以收敛的warmup=20，但是实验结果表明并没有像之前一样收敛
+CUDA_VISIBLE_DEVICES="2" python train.py --model_type flowformer_vio --regression_mode 2 --gpu_ids 0 --batch_size 16 --data_dir ./data --experiment_name convergence_original_flowformer_vio_regress_mode_2 --seq_len 2 --workers 16 --patch_size 16 --img_w 480 --img_h 216 --stage kitti --pretrain ./model_zoo/flowformer_kitti.pth --epochs_warmup 20 --epochs_joint 60 --epochs_fine 20
+# 将上一个实验修改一下batch_size==50，看是否收敛
+CUDA_VISIBLE_DEVICES="2" python train.py --model_type flowformer_vio --regression_mode 2 --gpu_ids 0 --batch_size 50 --data_dir ./data --experiment_name convergence_b50_original_flowformer_vio_regress_mode_2 --seq_len 2 --workers 16 --patch_size 16 --img_w 480 --img_h 216 --stage kitti --pretrain ./model_zoo/flowformer_kitti.pth --epochs_warmup 20 --epochs_joint 60 --epochs_fine 20
+# 修改trans和rotation的系数  angle改为100->50
+CUDA_VISIBLE_DEVICES="3" python train_kd.py --batch_size 16 --data_dir ./data --experiment_name flowformervio_kd_angleloss_50 --seq_len 2 --workers 8 --teacher_model_type deepvio --student_model_type flowformer_vio --pretrain ./model_zoo/flowformer_kitti.pth --img_w 480 --img_h 216 --stage kitti --regression_mode 2 --gpu_ids 0

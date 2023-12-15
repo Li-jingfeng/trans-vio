@@ -85,7 +85,7 @@ class KITTI_tester():
             probs = torch.zeros(x_in.shape[0], x_in.shape[1], 2).to(x_in.device)
             pose_seq = []
             with torch.no_grad():
-                if self.args.model_type == "cvpr":
+                if self.args.student_model_type == "cvpr":
                     two_imgs = torch.cat((x_in[:, :-1], x_in[:, 1:]), dim=2)
                     # pose, decision, probs, hc = net(x_in, i_in, is_first=(i==0), hc=hc, selection=selection, p=p)
                     # tscam encoder
@@ -94,35 +94,50 @@ class KITTI_tester():
                         img = {'rgb':two_imgs[:,i]}
                         pose = net(img, imus=i_in.unsqueeze(1))
                         pose_seq.append(pose)
-                elif self.args.model_type == "svio_vo":
+                elif self.args.student_model_type == "svio_vo":
                     pose = net(x_in)
                     pose = pose.squeeze(1)
                     pose_seq.append(pose)
-                elif self.args.model_type == 'flowformer_vo':
+                elif self.args.student_model_type == 'flowformer_vo':
                     pose = net(x_in[:,0],x_in[:,1])
                     pose = pose.squeeze(1)
                     pose_seq.append(pose)
-                elif self.args.model_type == 'flowformer_extractor_vo':
+                elif self.args.student_model_type == 'flowformer_vo_unsupervised':
+                    tow_images = torch.cat([x_in[:,:-1],x_in[:,1:]],dim=2)
+                    Input = x_in[:,self.args.seq_len//2]
+                    for i in range(tow_images.shape[1]):
+                        pose, depth2, depth = net(tow_images[:,i,:3],tow_images[:,i,3:],Input)
+                        pose = pose.squeeze(1)
+                        pose_seq.append(pose)
+                elif self.args.student_model_type == 'flowformer_extractor_vo':
                     pose = net(x_in[:,0],x_in[:,1])
                     pose = pose.squeeze(1)
                     pose_seq.append(pose)
-                elif self.args.model_type == 'flowformer_vo_part_corr':
+                elif self.args.student_model_type == 'svio_vo_corr':
+                    pose = net(x_in)
+                    pose = pose.squeeze(1)
+                    pose_seq.append(pose)
+                elif self.args.student_model_type == 'pwcnet_vo':
+                    pose = net(x_in)
+                    pose = pose.squeeze(1)
+                    pose_seq.append(pose)
+                elif self.args.student_model_type == 'flowformer_vo_part_corr':
                     pose = net(x_in[:,0],x_in[:,1])
                     pose = pose.squeeze(1)
                     pose_seq.append(pose)
-                elif self.args.model_type == 'flowformer_extractor_nocorr_vo':
+                elif self.args.student_model_type == 'flowformer_extractor_nocorr_vo':
                     pose = net(x_in[:,0],x_in[:,1])
                     pose = pose.squeeze(1)
                     pose_seq.append(pose)
-                elif self.args.model_type == 'flowformer_vio':
-                    pose = net(x_in[:,0],x_in[:,1],i_in.unsqueeze(1))
+                elif self.args.student_model_type == 'flowformer_vio':
+                    pose, _ = net(x_in[:,0],x_in[:,1],i_in.unsqueeze(1))
                     pose = pose.squeeze(1)
                     pose_seq.append(pose)
-                elif self.args.model_type == 'flowformer_vio_lstm':
+                elif self.args.student_model_type == 'flowformer_vio_lstm':
                     imgs_seq = torch.cat((x_in[:, :-1], x_in[:, 1:]), dim=2)
                     pose, hc = net(imgs_seq,i_in,hc=hc)
                     pose_seq = pose
-            if self.args.model_type != "flowformer_vio_lstm":
+            if self.args.student_model_type != "flowformer_vio_lstm":
                 pose_seq = torch.stack(pose_seq,dim=1).to(x_in.device)
             pose_list.append(pose_seq[0,:,:].detach().cpu().numpy())
             # pose_list.append(pose[0,:,:].detach().cpu().numpy())
@@ -140,10 +155,13 @@ class KITTI_tester():
             print(f'testing sequence {seq}')
             pose_est, dec_est, prob_est = self.test_one_path(net, self.dataloader[i], selection, num_gpu=num_gpu, p=p)            
             pose_est_global, pose_gt_global, t_rel, r_rel, t_rmse, r_rmse, usage, speed = kitti_eval(pose_est, dec_est, self.dataloader[i].poses_rel)# self.dataloader[i].poses_rel作为真值，6DOF的相对pose
-            
+            # pose_est_global_new = np.array(pose_est_global,dtype=np.float32).reshape(len(pose_est_global),-1)
+            # np.savetxt(file_path, pose_est_global_new[:,:12], fmt='%f', delimiter=' ')
+
             self.est.append({'pose_est_global':pose_est_global, 'pose_gt_global':pose_gt_global, 'decs':dec_est, 'probs':prob_est, 'speed':speed})
             self.errors.append({'t_rel':t_rel, 'r_rel':r_rel, 't_rmse':t_rmse, 'r_rmse':r_rmse, 'usage':usage})
             # np.savetxt(f'cvpr_seq{seq}_rel_pose_3dof_xypitchz.txt',pose_est[:,[3,4,2]])
+        
         return self.errors
 
     def generate_plots(self, save_dir, window_size):

@@ -575,7 +575,7 @@ class Pose_RNN(nn.Module):
         pose = self.regressor(out)
 
         hc = (hc[0].transpose(1, 0).contiguous(), hc[1].transpose(1, 0).contiguous())
-        return pose, hc
+        return pose, hc, out
 
 
 
@@ -603,7 +603,7 @@ class DeepVIO(nn.Module):
         for i in range(seq_len):
             if i == 0 and is_first:
                 # The first relative pose is estimated by both images and imu by default
-                pose, hc = self.Pose_net(fv[:, i:i+1, :], None, fi[:, i:i+1, :], None, hc)
+                pose, hc, kd_feature = self.Pose_net(fv[:, i:i+1, :], None, fi[:, i:i+1, :], None, hc)
             else:
                 if selection == 'gumbel-softmax':
                     # Otherwise, sample the decision from the policy network
@@ -611,7 +611,7 @@ class DeepVIO(nn.Module):
                     logit, decision = self.Policy_net(p_in.detach(), temp)
                     decision = decision.unsqueeze(1)
                     logit = logit.unsqueeze(1)
-                    pose, hc = self.Pose_net(fv[:, i:i+1, :], fv_alter[:, i:i+1, :], fi[:, i:i+1, :], decision, hc)
+                    pose, hc, kd_feature = self.Pose_net(fv[:, i:i+1, :], fv_alter[:, i:i+1, :], fi[:, i:i+1, :], decision, hc)
                     decisions.append(decision)
                     logits.append(logit)
                 elif selection == 'random':
@@ -619,7 +619,7 @@ class DeepVIO(nn.Module):
                     decision[:,:,1] = 1-decision[:,:,0]
                     decision = decision.to(fv.device)
                     logit = 0.5*torch.ones((fv.shape[0], 1, 2)).to(fv.device)
-                    pose, hc = self.Pose_net(fv[:, i:i+1, :], fv_alter[:, i:i+1, :], fi[:, i:i+1, :], decision, hc)
+                    pose, hc, kd_feature = self.Pose_net(fv[:, i:i+1, :], fv_alter[:, i:i+1, :], fi[:, i:i+1, :], decision, hc)
                     decisions.append(decision)
                     logits.append(logit)
             poses.append(pose)
@@ -630,7 +630,7 @@ class DeepVIO(nn.Module):
         logits = torch.cat(logits, dim=1)
         probs = torch.nn.functional.softmax(logits, dim=-1)
 
-        return poses, decisions, probs, hc
+        return poses, decisions, probs, hc, kd_feature
 # deepvio -> vo(seq==2)
 class SVIO_VO(nn.Module):
     def __init__(self, opt):

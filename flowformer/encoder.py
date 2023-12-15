@@ -259,7 +259,7 @@ class CostPerceiverEncoder(nn.Module):
         if cfg.use_mlp:
             self.encoder_layers = nn.ModuleList([MLPMixerLayer(cfg.cost_latent_dim, cfg, dropout=cfg.dropout) for idx in range(self.depth)])
         else:# 这里添加proj_drop参数，本来没有
-            self.encoder_layers = nn.ModuleList([SelfAttentionLayer(cfg.cost_latent_dim, cfg, dropout=cfg.dropout,proj_drop=cfg.proj_drop) for idx in range(self.depth)])
+            self.encoder_layers = nn.ModuleList([SelfAttentionLayer(cfg.cost_latent_dim, cfg, dropout=cfg.dropout) for idx in range(self.depth)])
 
         if self.cfg.vertical_conv:
             self.vertical_encoder_layers = nn.ModuleList([ConvNextLayer(cfg.cost_latent_dim) for idx in range(self.depth)])

@@ -8,7 +8,9 @@ class twins_svt_large(nn.Module):
     def __init__(self, pretrained=True):
         super().__init__()
         # ssl_context = ssl._create_unverified_context()
-        self.svt = timm.create_model('twins_svt_large', pretrained=pretrained)
+        # pretrained false
+        pretrained = False
+        self.svt = timm.create_model('twins_svt_large', pretrained=pretrained, checkpoint_path="/disk1/lijingfeng/.cache/torch/hub/checkpoints/twins_svt_large-90f6aaa9.pth")
 
         del self.svt.head
         del self.svt.patch_embeds[2]
@@ -17,7 +19,7 @@ class twins_svt_large(nn.Module):
         del self.svt.blocks[2]
         del self.svt.pos_block[2]
         del self.svt.pos_block[2]
-    
+
     def forward(self, x, data=None, layer=2):
         B = x.shape[0]
         for i, (embed, drop, blocks, pos_blk) in enumerate(
